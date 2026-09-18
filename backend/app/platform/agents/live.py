@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-ToolName = Literal["end_interview", "give_floor"]
+ToolName = Literal["end_interview", "give_floor", "write_on_board"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +117,18 @@ class PanelTurn:
 
 
 @dataclass(frozen=True, slots=True)
+class BoardWrite:
+    """The examiner wrote on the board: a problem, its numbers, a formula.
+
+    Spoken mathematics is unusable — "x squared over two pi" is not something a student can
+    work from — so anything with numbers in it is written up as well as said.
+    """
+
+    text: str
+    kind: Literal["board_write"] = "board_write"
+
+
+@dataclass(frozen=True, slots=True)
 class EngineError:
     code: str
     kind: Literal["error"] = "error"
@@ -132,6 +144,7 @@ LiveEvent = (
     | Usage
     | EndRequested
     | PanelTurn
+    | BoardWrite
     | EngineError
 )
 
@@ -140,6 +153,10 @@ class LiveConnection(Protocol):
     async def send_audio(self, pcm16k: bytes) -> None: ...
 
     async def send_text(self, text: str) -> None: ...
+
+    async def send_image(self, jpeg: bytes) -> None:
+        """A still the model should look at: the board as the student has written it by hand."""
+        ...
 
     def events(self) -> AsyncIterator[LiveEvent]: ...
 
@@ -217,6 +234,7 @@ class FakeLiveConnection:
     spec: LiveAgentSpec
     received_audio_bytes: int = 0
     received_text: list[str] = field(default_factory=list)
+    received_images: list[bytes] = field(default_factory=list)
     closed: bool = False
     _queue: asyncio.Queue[LiveEvent | None] = field(default_factory=asyncio.Queue)
 
@@ -225,6 +243,9 @@ class FakeLiveConnection:
 
     async def send_text(self, text: str) -> None:
         self.received_text.append(text)
+
+    async def send_image(self, jpeg: bytes) -> None:
+        self.received_images.append(jpeg)
 
     def inject(self, *events: LiveEvent) -> None:
         for event in events:

@@ -89,15 +89,6 @@ class Settings(BaseSettings):
 
     app_check_enforced: bool = True
     analytics_salt: SecretStr = SecretStr("")
-    # Faces: people recorded seated at a desk, lip-synced by our LiveTalking server. Unset URL
-    # simply means no face — the interview runs on audio alone — so this is deliberately not
-    # required in deployed environments. The secret signs the tokens the server checks;
-    # `livetalking_avatar` makes every face one recording (for testing with LiveTalking's
-    # sample avatar before the interviewers are recorded).
-    livetalking_url: str = ""
-    livetalking_secret: SecretStr = SecretStr("")
-    livetalking_avatar: str = ""
-
     recording_retention_days: int = Field(default=365, ge=1, le=3650)
     free_live_minutes_month: int = Field(default=120, ge=0)
     max_json_bytes: int = 1_048_576

@@ -3,12 +3,11 @@
  *
  * A real interview loop puts different people in front of you as it goes: a
  * recruiter first, engineers in the middle, the hiring manager and executives
- * at the end. The face should match — seniority is part of the pressure the
+ * at the end. The person should match — seniority is part of the pressure the
  * candidate is practising for.
  *
- * The avatar id names the person's recording on our LiveTalking face server
- * (`data/avatars/<id>`): them seated at their desk, and writing notes while the
- * candidate answers.
+ * Interviews are voice only: nobody is shown on screen, so a round is a name, a
+ * role and the voice that suits them.
  */
 
 /** Round types come from the backend catalog (`modules/interview/catalogs.py`). */
@@ -28,8 +27,6 @@ export type InterviewRoundType =
 export type Seniority = 'peer' | 'senior' | 'leader' | 'executive'
 
 export interface Interviewer {
-  /** The recording on the face server (`infra/livetalking`). */
-  avatarId: string
   /** Shown on the call tile. */
   name: string
   /** The job they are playing, shown under the name. */
@@ -52,7 +49,6 @@ export interface Interviewer {
 
 export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
   screening: {
-    avatarId: 'mia',
     name: 'Mia Fernández',
     role: 'Talent Partner',
     seniority: 'peer',
@@ -61,7 +57,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Polished and neutral: the first call is friendly, not adversarial.',
   },
   behavioral: {
-    avatarId: 'evelyn',
     name: 'Evelyn Ross',
     role: 'People Business Partner',
     seniority: 'senior',
@@ -70,7 +65,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Experienced and composed — the person who probes how you work with others.',
   },
   technical: {
-    avatarId: 'pablo',
     name: 'Pablo Duarte',
     role: 'Senior Engineer',
     seniority: 'senior',
@@ -79,7 +73,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'A working engineer at a desk: a peer who will check your depth.',
   },
   coding: {
-    avatarId: 'leo',
     name: 'Leo Mensah',
     role: 'Staff Engineer',
     seniority: 'senior',
@@ -88,7 +81,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Approachable while you think aloud, which is what a pairing round needs.',
   },
   system_design: {
-    avatarId: 'gabriel',
     name: 'Gabriel Sartori',
     role: 'Principal Engineer',
     seniority: 'leader',
@@ -97,7 +89,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Visibly the most experienced technologist in the loop — matches a design review.',
   },
   case: {
-    avatarId: 'cara',
     name: 'Cara Lindqvist',
     role: 'Engagement Manager',
     seniority: 'senior',
@@ -106,7 +97,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Consulting-sharp and quick, the register a case interview is run in.',
   },
   hiring_manager: {
-    avatarId: 'richard',
     name: 'Richard Hale',
     role: 'Hiring Manager',
     seniority: 'leader',
@@ -115,7 +105,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Suit, office, older: the person who actually decides.',
   },
   presentation: {
-    avatarId: 'william',
     name: 'William Okonjo',
     role: 'Department Head',
     seniority: 'executive',
@@ -124,7 +113,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'The most senior face available — presenting to an executive should feel different.',
   },
   take_home_review: {
-    avatarId: 'kevin',
     name: 'Kevin Park',
     role: 'Team Manager',
     seniority: 'senior',
@@ -133,7 +121,6 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Measured and neutral: this round is about walking through your work.',
   },
   other: {
-    avatarId: 'mia',
     name: 'Mia Fernández',
     role: 'Interviewer',
     seniority: 'peer',

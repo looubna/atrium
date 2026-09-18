@@ -6,7 +6,7 @@ where current facts matter, read whatever the user handed over, and write the br
 Document reading (type detection by content, capped extraction) is shared code that lives
 in `app.modules.exam.materials`: it was written for the exam module first and nothing about
 it is exam-specific. Cross-module imports are already how this codebase shares that kind of
-helper (the exam module takes `sanitize` and `livetalking` from the interview module).
+helper (the exam module takes `sanitize` from the interview module).
 """
 
 from __future__ import annotations

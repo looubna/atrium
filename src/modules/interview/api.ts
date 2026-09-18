@@ -352,25 +352,6 @@ export const createInterviewSession = (body: {
   body: { id: crypto.randomUUID(), ...body },
 })
 
-/** An interviewer recorded seated at a desk, lip-synced by our own LiveTalking server. */
-export interface AvatarSession {
-  url: string
-  token: string
-  name: string
-  role: string
-  panel?: { name: string; role: string; url: string; token: string }[]
-}
-
-/** Modules that put a face on screen; each picks the person for its own kind of session. */
-export type FaceModule = 'interview' | 'exam'
-
-/**
- * Asks for a face for this session. The server picks the person and holds the
- * face server's secret; a 503 means no avatar, and the session runs on audio alone.
- */
-export const getAvatarSession = (sessionId: string, module: FaceModule = 'interview') =>
-  api<AvatarSession>(`/${module}/sessions/${sessionId}/avatar-session`, { method: 'POST' })
-
 export function formatClock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const hours = Math.floor(total / 3600)

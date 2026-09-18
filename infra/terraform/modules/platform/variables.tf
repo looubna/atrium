@@ -89,10 +89,3 @@ variable "app_config" {
   description = "Non-secret application settings passed to both Cloud Run services (models, limits, flags)."
   default     = {}
 }
-
-variable "livetalking_secret" {
-  type        = string
-  sensitive   = true
-  description = "Shared secret with the LiveTalking face server that renders the interviewers. Set LIVETALKING_URL in app_config too. Empty means no face: interviews run on audio alone."
-  default     = ""
-}

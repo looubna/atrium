@@ -1,26 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { PANEL, interviewerFor } from '@/data/interviewers'
+import { interviewerFor } from '@/data/interviewers'
 import { ARRIVAL, RECEPTION_STILL, ROOM_PHOTO, type Orientation } from '@/data/inPersonMedia'
 import type { SessionSetup } from '@/data/practice'
 import { useCamera } from '@/lib/useCamera'
 import { cn } from '@/lib/utils'
 import { CodePane } from '@/modules/interview/live/CodePane'
-import { CUT_BACK_MS, shotFor, type Speaker } from '@/modules/interview/live/shots'
-import { useInterviewRoom, type InterviewRoom } from '@/modules/interview/live/useInterviewRoom'
+import { CUT_BACK_MS, type Speaker } from '@/modules/interview/live/shots'
+import { useInterviewRoom } from '@/modules/interview/live/useInterviewRoom'
 import type { LiveInterviewControls } from '@/modules/interview/live/useLiveInterview'
-import type { AvatarRenderer } from '@/platform/avatar/types'
 import { isLiveInPerson, useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
 import { IconCode } from '../ui/Icon'
-import { AvatarTile } from './AvatarTile'
 import { LeaveArrow, LiveOverlay, SceneCaption } from './LivePanels'
 
 /**
  * A live interview in person, the way a visit goes: the firm's glass doors, a tap of the pass,
  * the walk in, the receptionist's welcome while the interviewer comes down, then the meeting
- * room from the candidate's chair. The interviewers are people recorded seated at a desk (our
- * LiveTalking server lip-syncs them and plays them writing notes while the candidate answers),
- * shown whole and cutting to whoever speaks.
+ * room from the candidate's chair. Nobody is shown on screen: the interview is voice only, over
+ * the photographed room, with a caption naming whoever is speaking.
  * Nothing on screen but a way out: no call controls, timers or meters.
  */
 
@@ -118,7 +115,6 @@ export function InPersonRoom({
   const interview = session.interview!
   const panel = interview.panel === 'panel'
   const lead = interviewerFor(interview.roundType)
-  const colleagues = panel ? PANEL.filter((m) => m.onCamera) : []
   const roomPhoto = ROOM_PHOTO[panel ? 'panel' : 'one'][orientation]
   const arrivalMedia = ARRIVAL[orientation]
 
@@ -137,7 +133,7 @@ export function InPersonRoom({
     [panel],
   )
   const room = useInterviewRoom({ sessionId, camera: camera.stream, beforeConnect, tracker })
-  const { live, liveActive, avatar, avatarFailed, faceSettled } = room
+  const { live, liveActive } = room
   const { phase } = live.state
   useEffect(() => {
     if (phase !== 'idle' && phase !== 'starting') setStarted(true)
@@ -152,16 +148,12 @@ export function InPersonRoom({
     setArrival('walking')
   }
   useEffect(() => {
-    if (zone !== 'reception' || arrival !== 'waiting' || !faceSettled) return
+    if (zone !== 'reception' || arrival !== 'waiting') return
     const timer = window.setTimeout(takeSeat, TAKE_SEAT_DELAY_MS)
     return () => window.clearTimeout(timer)
-  }, [zone, arrival, faceSettled, takeSeat])
+  }, [zone, arrival, takeSeat])
 
   const speaker = useSpeaker(live)
-  const shot = shotFor(speaker, {
-    lead: room.leadFaceLive,
-    colleagues: Object.fromEntries(colleagues.map((m) => [m.name, m.name in room.panelFaces])),
-  })
   speakerRef.current = speaker
   const coding = liveActive && live.state.coding
   const [boardOpen, setBoardOpen] = useState(false)
@@ -172,16 +164,10 @@ export function InPersonRoom({
     return () => setSceneCovered(false)
   }, [setSceneCovered])
 
-  // A voice with no face on screen (their face couldn't join): say who is talking.
+  // Nobody is on screen, so the room always says who is talking.
   const faceless =
-    speaker?.kind === 'lead'
-      ? room.leadFaceLive
-        ? null
-        : (avatar?.name ?? lead.name)
-      : speaker?.kind === 'colleague' && !(speaker.name in room.panelFaces)
-        ? speaker.name
-        : null
-  const leadFirst = (avatar?.name ?? lead.name).split(' ')[0]
+    speaker?.kind === 'lead' ? lead.name : speaker?.kind === 'colleague' ? speaker.name : null
+  const leadFirst = lead.name.split(' ')[0]
   const leave = seated && liveActive ? live.end : leaveInterior
 
   return (
@@ -229,7 +215,7 @@ export function InPersonRoom({
           )}
           {arrival === 'waiting' && phase !== 'failed' && (
             <SceneCaption>
-              {faceSettled ? `${leadFirst} is here. Follow them to the meeting room.` : `${leadFirst} is on the way down…`}
+              {`${leadFirst} is here. Follow them to the meeting room.`}
             </SceneCaption>
           )}
         </div>
@@ -241,31 +227,6 @@ export function InPersonRoom({
       >
         <div className="absolute inset-0 bg-[#0b0d12]" />
         <img src={roomPhoto} alt="" className="absolute inset-0 size-full object-cover" />
-        {avatar && !avatarFailed && (
-          <AvatarTile
-            variant="closeup"
-            renderer={avatar.renderer}
-            name={avatar.name}
-            role={avatar.role}
-            shown={shot.kind === 'closeup' && shot.who === 'lead'}
-            onLive={room.setFaceOnScreen}
-            onFailed={room.onAvatarFailed}
-            onEnded={room.onFaceEnded}
-          />
-        )}
-        {colleagues.map((member) => {
-          const face = room.colleagueFace(member.name)
-          return face ? (
-            <Colleague
-              key={member.name}
-              name={member.name}
-              role={member.role}
-              renderer={face}
-              shown={shot.kind === 'closeup' && shot.who === member.name}
-              room={room}
-            />
-          ) : null
-        })}
         {seated && faceless && <SceneCaption>{`${faceless.split(' ')[0]} is speaking`}</SceneCaption>}
         {seated && coding && boardOpen && (
           <div className="absolute inset-x-3 bottom-20 top-16 z-10 flex sm:inset-x-8">
@@ -310,13 +271,3 @@ export function InPersonRoom({
   )
 }
 
-function Colleague({
-  room,
-  name,
-  ...props
-}: { room: InterviewRoom; name: string; role: string; renderer: AvatarRenderer; shown: boolean }) {
-  const { colleagueLive, colleagueFailed, onFaceEnded } = room
-  const onLive = useCallback((r: AvatarRenderer) => colleagueLive(name, r), [colleagueLive, name])
-  const onFailed = useCallback(() => colleagueFailed(name), [colleagueFailed, name])
-  return <AvatarTile variant="closeup" name={name} {...props} onLive={onLive} onFailed={onFailed} onEnded={onFaceEnded} />
-}

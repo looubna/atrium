@@ -17,7 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 CLIENT_FRAME = struct.Struct("<II")
 SERVER_FRAME = struct.Struct("<II")
 MAX_CLIENT_PCM_BYTES = 16_000 * 2 // 4  # 250 ms
-MAX_TEXT_MESSAGE_BYTES = 64_000
+#: Control messages are small; a board image is the one exception, and every other field
+#: on every message is length-capped by its own schema, so the envelope can be generous.
+MAX_TEXT_MESSAGE_BYTES = 200_000
+#: About 120 KB of JPEG once decoded: a readable board, not a photograph.
+MAX_BOARD_IMAGE_B64 = 160_000
 
 
 class CloseCode(IntEnum):
@@ -87,6 +91,14 @@ class CodeSnapshot(_Msg):
     text: Annotated[str, Field(max_length=20_000)]
 
 
+class BoardImage(_Msg):
+    """The board as the student has written it by hand, so the examiner can read the work."""
+
+    type: Literal["board_image"]
+    mediaMs: Annotated[int, Field(ge=0)]
+    jpegBase64: Annotated[str, Field(min_length=64, max_length=MAX_BOARD_IMAGE_B64)]
+
+
 class ClientEnd(_Msg):
     type: Literal["end"]
 
@@ -96,7 +108,7 @@ class Ping(_Msg):
     mediaMs: Annotated[int, Field(ge=0)]
 
 
-Control = PlaybackStarted | PlaybackStopped | CodeSnapshot | ClientEnd | Ping
+Control = PlaybackStarted | PlaybackStopped | CodeSnapshot | BoardImage | ClientEnd | Ping
 _control: TypeAdapter[Control] = TypeAdapter(Annotated[Control, Field(discriminator="type")])
 _auth: TypeAdapter[AuthMessage] = TypeAdapter(AuthMessage)
 

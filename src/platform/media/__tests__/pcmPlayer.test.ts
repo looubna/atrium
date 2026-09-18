@@ -72,40 +72,6 @@ describe('PcmPlayer lead time', () => {
     player(ctx).enqueue(1, new Int16Array(2400))
     expect(ctx.started[0].startedAt).toBeCloseTo(10.04, 5)
   })
-
-  it('waits for the avatar when a lag is set', () => {
-    const p = player(ctx)
-    p.setLead(180)
-    p.enqueue(1, new Int16Array(2400))
-    expect(ctx.started[0].startedAt).toBeCloseTo(10.22, 5)
-  })
-
-  it('keeps later chunks of a turn gapless behind the delayed first chunk', () => {
-    const p = player(ctx)
-    p.setLead(180)
-    p.enqueue(1, new Int16Array(2400)) // 0.1 s at 24 kHz
-    p.enqueue(1, new Int16Array(2400))
-    expect(ctx.started[1].startedAt).toBeCloseTo(10.32, 5)
-  })
-
-  it('reports the delayed start time to the server, so the media clock stays honest', () => {
-    const onTurnStart = vi.fn()
-    const p = new PcmPlayer(ctx as unknown as AudioContext, (t) => t * 1000, {
-      onTurnStart,
-      onTurnStop: vi.fn(),
-      onSpeakingChange: vi.fn(),
-    })
-    p.setLead(180)
-    p.enqueue(7, new Int16Array(2400))
-    expect(onTurnStart).toHaveBeenCalledWith(7, 10220)
-  })
-
-  it('ignores a negative lag', () => {
-    const p = player(ctx)
-    p.setLead(-500)
-    p.enqueue(1, new Int16Array(2400))
-    expect(ctx.started[0].startedAt).toBeCloseTo(10.04, 5)
-  })
 })
 
 describe('PcmPlayer turns', () => {
@@ -151,7 +117,7 @@ describe('PcmPlayer turns', () => {
     expect(p.isSpeaking).toBe(false)
   })
 
-  it('routes an always-audible turn past the muted avatar path', () => {
+  it('records and plays every turn: nothing else voices one', () => {
     const ctx = new FakeContext()
     const targets: unknown[][] = []
     const create = ctx.createBufferSource.bind(ctx)
@@ -165,15 +131,11 @@ describe('PcmPlayer turns', () => {
       return source
     }
     const p = player(ctx)
-    p.setAudible(false)
     p.enqueue(1, new Int16Array(240))
-    p.enqueue(2, new Int16Array(240), 'always')
-    p.enqueue(3, new Int16Array(240), 'silent')
-    // Both reach the recording; they leave through different speaker paths.
-    expect(targets[0][0]).toBe(p.output)
-    expect(targets[1][0]).toBe(p.output)
-    expect(targets[0][1]).not.toBe(targets[1][1])
-    // A colleague whose own face speaks is only recorded.
-    expect(targets[2]).toEqual([p.output])
+    p.enqueue(2, new Int16Array(240))
+    // Nothing voices a turn but this player, so every turn is both recorded and heard.
+    for (const seen of targets) expect(seen[0]).toBe(p.output)
+    for (const seen of targets) expect(seen).toHaveLength(2)
+    expect(targets[0][1]).toBe(targets[1][1])
   })
 })

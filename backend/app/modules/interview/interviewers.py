@@ -1,11 +1,11 @@
-"""Who the candidate meets in each round: a face and a voice that belong together.
+"""Who the candidate meets in each round: a name, a role and the voice that suits them.
 
 A real loop escalates — a recruiter first, engineers next, the hiring manager and
-executives last — and the interviewer should escalate with it. The avatar is chosen
-here, on the server, so a client can never ask for an arbitrary face.
+executives last — and the interviewer should escalate with it. Who speaks is chosen
+here, on the server, so a client can never ask for an arbitrary person.
 
-Their faces are recordings on our LiveTalking server (`infra/livetalking`), the same person
-online and in person. Mirrors `src/data/interviewers.ts`; the two are kept in step by tests on both sides.
+Interviews are voice only: nobody is shown on screen, so a round is a name, a role and a
+voice. Mirrors `src/data/interviewers.ts`; the two are kept in step by tests on both sides.
 Google describes Live API voices by character (firm, mature, clear) and never by
 gender, so each voice pairing is a listening judgement, not a documented fact.
 """
@@ -20,44 +20,33 @@ from app.platform.agents.live import PanelMember
 
 @dataclass(frozen=True, slots=True)
 class Interviewer:
-    """A recording on our LiveTalking face server (`data/avatars/<avatar_id>`)."""
+    """The person the candidate hears. No face: interviews are voice only."""
 
-    avatar_id: str
     name: str
     role: str
     voice: str
 
 
 INTERVIEWERS: dict[RoundType, Interviewer] = {
-    RoundType.SCREENING: Interviewer(
-        "mia", "Mia Fernández", "Talent Partner", "Leda"
+    RoundType.SCREENING: Interviewer("Mia Fernández", "Talent Partner", "Leda"
     ),
-    RoundType.BEHAVIORAL: Interviewer(
-        "evelyn", "Evelyn Ross", "People Business Partner", "Gacrux"
+    RoundType.BEHAVIORAL: Interviewer("Evelyn Ross", "People Business Partner", "Gacrux"
     ),
-    RoundType.TECHNICAL: Interviewer(
-        "pablo", "Pablo Duarte", "Senior Engineer", "Iapetus"
+    RoundType.TECHNICAL: Interviewer("Pablo Duarte", "Senior Engineer", "Iapetus"
     ),
-    RoundType.CODING: Interviewer(
-        "leo", "Leo Mensah", "Staff Engineer", "Puck"
+    RoundType.CODING: Interviewer("Leo Mensah", "Staff Engineer", "Puck"
     ),
-    RoundType.SYSTEM_DESIGN: Interviewer(
-        "gabriel", "Gabriel Sartori", "Principal Engineer", "Charon"
+    RoundType.SYSTEM_DESIGN: Interviewer("Gabriel Sartori", "Principal Engineer", "Charon"
     ),
-    RoundType.CASE: Interviewer(
-        "cara", "Cara Lindqvist", "Engagement Manager", "Erinome"
+    RoundType.CASE: Interviewer("Cara Lindqvist", "Engagement Manager", "Erinome"
     ),
-    RoundType.HIRING_MANAGER: Interviewer(
-        "richard", "Richard Hale", "Hiring Manager", "Alnilam"
+    RoundType.HIRING_MANAGER: Interviewer("Richard Hale", "Hiring Manager", "Alnilam"
     ),
-    RoundType.PRESENTATION: Interviewer(
-        "william", "William Okonjo", "Department Head", "Sadaltager"
+    RoundType.PRESENTATION: Interviewer("William Okonjo", "Department Head", "Sadaltager"
     ),
-    RoundType.TAKE_HOME_REVIEW: Interviewer(
-        "kevin", "Kevin Park", "Team Manager", "Schedar"
+    RoundType.TAKE_HOME_REVIEW: Interviewer("Kevin Park", "Team Manager", "Schedar"
     ),
-    RoundType.OTHER: Interviewer(
-        "mia", "Mia Fernández", "Interviewer", "Leda"
+    RoundType.OTHER: Interviewer("Mia Fernández", "Interviewer", "Leda"
     ),
 }
 
@@ -77,11 +66,6 @@ PANEL_COLLEAGUES: tuple[PanelMember, ...] = (
                 "the craft itself"),
 )
 PANEL_OBSERVER = ("Sam Wright", "Recruiting Coordinator")
-#: Their own recordings, used by no lead interviewer.
-PANEL_AVATARS: dict[str, str] = {
-    "Daniel Brooks": "daniel",
-    "Grace Lin": "grace",
-}
 
 def interviewer_for(round_type: RoundType | str | None) -> Interviewer:
     """The interviewer for a round, falling back rather than leaving a round faceless."""

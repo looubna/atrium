@@ -54,32 +54,6 @@ resource "google_secret_manager_secret_iam_member" "analytics_salt" {
   member    = each.value
 }
 
-# Signs the tokens our LiveTalking face server checks. Only the API needs it — the worker never
-# talks to the face server. Empty: interviews run without a face. Set LIVETALKING_URL in app_config.
-resource "google_secret_manager_secret" "livetalking_secret" {
-  count     = var.livetalking_secret == "" ? 0 : 1
-  project   = var.project_id
-  secret_id = "livetalking-secret"
-  labels    = local.labels
-  replication {
-    auto {}
-  }
-  depends_on = [google_project_service.enabled]
-}
-
-resource "google_secret_manager_secret_version" "livetalking_secret" {
-  count       = var.livetalking_secret == "" ? 0 : 1
-  secret      = google_secret_manager_secret.livetalking_secret[0].id
-  secret_data = var.livetalking_secret
-}
-
-resource "google_secret_manager_secret_iam_member" "livetalking_secret" {
-  count     = var.livetalking_secret == "" ? 0 : 1
-  secret_id = google_secret_manager_secret.livetalking_secret[0].id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = google_service_account.api.member
-}
-
 
 resource "google_cloud_tasks_queue" "queues" {
   for_each = {
@@ -273,19 +247,6 @@ resource "google_cloud_run_v2_service" "api" {
           }
         }
       }
-
-      dynamic "env" {
-        for_each = google_secret_manager_secret.livetalking_secret
-        content {
-          name = "LIVETALKING_SECRET"
-          value_source {
-            secret_key_ref {
-              secret  = env.value.secret_id
-              version = "latest"
-            }
-          }
-        }
-      }
     }
   }
 
@@ -300,7 +261,6 @@ resource "google_cloud_run_v2_service" "api" {
   depends_on = [
     google_project_service.enabled,
     google_secret_manager_secret_iam_member.analytics_salt,
-    google_secret_manager_secret_iam_member.livetalking_secret,
   ]
 }
 

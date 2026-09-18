@@ -80,7 +80,6 @@ separate because their exposure (public vs private), timeouts (60-minute WebSock
 | App platform | `src/platform` | Firebase init, API client, App Check bridge, native bridge, live protocol & client, audio capture/playback |
 | Interview UI | `src/modules/interview` | Journey review, live interview hook, feedback dashboard, API types |
 | Oral exam UI | `src/modules/exam`, `src/components/navigation/OralExam.tsx` | Minimal setup (subject plus materials), the analysis taking shape, the examiner's room and the board |
-| Interviewer's face | `src/platform/avatar`, `src/data/interviewers.ts`, `backend/app/modules/interview/{interviewers,avatar_api}.py` | Swappable avatar renderer (our own LiveTalking face server, `infra/livetalking`); the face and the Gemini Live voice are chosen per round on the server |
 | API/worker core | `backend/app/core` | Settings with environment guard, JSON logging with redaction, errors, middleware, tracing |
 | Platform services | `backend/app/platform` | Auth, users/consent, plans/usage, rate limits, storage, media tracks, transcripts, AI gateway, live gateway, jobs/pipeline, feedback validation, competencies, deletion |
 | Interview module | `backend/app/modules/interview` | Catalogs, Agent 1 (strategist), Agent 2 (live interviewer, evaluator), retry planner, resumes, applications/blueprints, sessions |
@@ -231,9 +230,7 @@ signing is configured.
 | Firestore user-rooted, server-only writes | Simple rules, IDOR-resistant, recursive deletion | Writes need the API |
 | Validation + one repair retry for AI output | Structured, bounded, reviewable failures | Occasional failed generation to retry |
 | Two Cloud Run services from one image | Different exposure/timeouts without microservices | Two deploys per release |
-| Hosted avatar behind a renderer interface | A photoreal interviewer in days rather than months of MetaHuman work, and the provider stays replaceable | About $0.11–0.16 per minute, and a third party receives the interviewer's synthesized speech (never the candidate's audio or video) |
-| The avatar's own audio track is what the candidate hears | The provider renders the face from that same audio, so lips and voice cannot drift apart | `PcmPlayer` keeps running silently as the media clock and the recording feed |
-| A different, more senior face per round | A loop that escalates — recruiter, engineers, hiring manager, executive — is what candidates are actually preparing for | Voice/face pairings are listening judgements: Google documents Live voices by character, never by gender |
+| A different, more senior interviewer per round | A loop that escalates — recruiter, engineers, hiring manager, executive — is what candidates are actually preparing for | Voice pairings are listening judgements: Google documents Live voices by character, never by gender |
 
 ## 14. Status
 

@@ -36,7 +36,6 @@ vi.mock('@/modules/interview/live/useLiveInterview', () => ({
     sendCodeSnapshot: vi.fn(),
   }),
 }))
-vi.mock('@/platform/avatar/useAvatar', () => ({ useAvatar: () => ({ avatar: null, unavailable: false }) }))
 vi.mock('@/lib/useCamera', () => ({ useCamera: () => ({ stream: null, error: null }) }))
 
 // The setup screen talks to the API and to Firestore listeners; neither exists in a test.

@@ -79,7 +79,9 @@ class MaterialRecord:
 class Retriever(Protocol):
     """Anything that can answer "what in the material bears on this?"."""
 
-    def search(self, query: str, *, limit: int = TOP_K, exclude: set[str] = frozenset()) -> list[MaterialRecord]: ...
+    def search(
+        self, query: str, *, limit: int = TOP_K, exclude: frozenset[str] = frozenset()
+    ) -> list[MaterialRecord]: ...
 
     def __len__(self) -> int: ...
 
@@ -122,7 +124,7 @@ class LexicalRetriever:
         possible = sum(self._weights.get(term, 1.0) for term in query_terms) or 1.0
         return (earned / possible) * _KIND_WEIGHT.get(record.kind, 1.0)
 
-    def search(self, query: str, *, limit: int = TOP_K, exclude: set[str] = frozenset()) -> list[MaterialRecord]:
+    def search(self, query: str, *, limit: int = TOP_K, exclude: frozenset[str] = frozenset()) -> list[MaterialRecord]:
         query_terms = content_words(query)
         scored = [
             (self.score(query_terms, record), index, record)
@@ -139,7 +141,7 @@ class LexicalRetriever:
 class NoMaterial:
     """The retriever used when the debate has no documents behind it."""
 
-    def search(self, query: str, *, limit: int = TOP_K, exclude: set[str] = frozenset()) -> list[MaterialRecord]:
+    def search(self, query: str, *, limit: int = TOP_K, exclude: frozenset[str] = frozenset()) -> list[MaterialRecord]:
         return []
 
     def __len__(self) -> int:

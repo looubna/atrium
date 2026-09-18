@@ -35,7 +35,6 @@ vi.mock('@/modules/interview/live/useLiveInterview', () => ({
     sendCodeSnapshot: vi.fn(),
   }),
 }))
-vi.mock('@/platform/avatar/useAvatar', () => ({ useAvatar: () => ({ avatar: null, unavailable: false }) }))
 vi.mock('@/lib/useCamera', () => ({ useCamera: () => ({ stream: null, error: null }) }))
 
 const { useAppStore } = await import('@/state/useAppStore')
@@ -78,11 +77,11 @@ describe('in-person interview', () => {
     }
   })
 
-  it('waits at reception for the interviewer', () => {
+  it('sends you through at reception: there is no face to wait for', () => {
     useAppStore.setState({ interiorZone: 'reception' })
     liveState.phase = 'connecting'
     const out = html()
-    expect(out).toContain('Cara is on the way down')
+    expect(out).toContain('Cara is here. Follow them to the meeting room.')
     expect(out).toContain('aria-label="Leave"')
   })
 

@@ -26,6 +26,7 @@ from google.genai import types
 from app.core.settings import get_settings
 from app.platform.agents.live import (
     AudioOut,
+    BoardWrite,
     EndRequested,
     EngineError,
     InputText,
@@ -43,6 +44,8 @@ from app.platform.agents.live import (
 log = logging.getLogger(__name__)
 
 APP_NAME = "atrium-live"
+#: A board holds a problem, not an essay.
+MAX_BOARD_TEXT = 1_200
 COMPRESSION_TRIGGER_TOKENS = 32_000
 COMPRESSION_TARGET_TOKENS = 16_000
 
@@ -69,6 +72,18 @@ def give_floor(colleague: str, words: str, purpose: str = "question") -> dict[st
     if purpose == "question":
         return {"status": "speaking", "next": "Your colleague is asking now. Stay silent and listen to the answer."}
     return {"status": "speaking", "next": "Your colleague is greeting the candidate. Carry on when you are ready."}
+
+
+def write_on_board(text: str) -> dict[str, str]:
+    """Write on the board so the student can see it. Use it for anything they cannot
+    hold in their head from hearing it once: a problem statement, its numbers and units,
+    a dataset, an equation to work from. Keep it to the few lines you would really write
+    on a board, and say it out loud as well.
+
+    Args:
+        text: Exactly what appears on the board, in plain text, over a few short lines.
+    """
+    return {"status": "written"}
 
 
 def _static_instruction(text: str) -> Any:
@@ -149,6 +164,10 @@ def map_event(event: Any) -> list[LiveEvent]:
                 out.append(PanelTurn(colleague, words, "hello"))
             else:
                 out.append(PanelTurn(colleague, words, "question"))
+        elif call.name == "write_on_board":
+            written = str((call.args or {}).get("text", ""))[:MAX_BOARD_TEXT]
+            if written.strip():
+                out.append(BoardWrite(written))
 
     if getattr(event, "interrupted", False):
         out.append(Interrupted())
@@ -172,6 +191,10 @@ class AdkLiveConnection:
 
     async def send_text(self, text: str) -> None:
         self.queue.send_content(types.Content(role="user", parts=[types.Part.from_text(text=text)]))
+
+    async def send_image(self, jpeg: bytes) -> None:
+        # The board as the student has written it, on the same realtime channel as the audio.
+        self.queue.send_realtime(types.Blob(mime_type="image/jpeg", data=jpeg))
 
     async def events(self) -> AsyncIterator[LiveEvent]:
         async for event in self.runner.run_live(
@@ -214,10 +237,17 @@ class AdkLiveEngine:
         )
         tools = [
             FunctionTool(fn)
-            for name, fn in (("end_interview", end_interview), ("give_floor", give_floor))
+            for name, fn in (
+                ("end_interview", end_interview),
+                ("give_floor", give_floor),
+                ("write_on_board", write_on_board),
+            )
             if name in spec.tools
         ]
         for tool in tools:
+            if tool.name == "write_on_board":
+                # Writing is part of asking: the examiner carries straight on speaking.
+                tool.response_scheduling = types.FunctionResponseScheduling.SILENT
             if tool.name == "give_floor":
                 # The colleague asks next and the candidate answers: the result must not start
                 # the lead talking again (a blocking result makes it restart its turn).

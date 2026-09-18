@@ -5,7 +5,7 @@ one thing this feature depends on, which is the sense of arguing with somebody w
 remembers what you said. Which opponent depends on the format, because a Socratic
 questioner and a formal-debate opponent are genuinely different people to face.
 
-The faces are recordings on our own LiveTalking server (`infra/livetalking`), reusing
+Debates are voice only: nobody is shown on screen. The cast reuses
 the people the other modules already use. Mirrors `src/data/debaters.ts`; tests on both
 sides keep the two in step.
 """
@@ -19,9 +19,8 @@ from app.modules.debate.catalogs import DebateFormat
 
 @dataclass(frozen=True, slots=True)
 class Debater:
-    """A recording on our LiveTalking face server (`data/avatars/<avatar_id>`)."""
+    """The person the candidate hears. No face: interviews are voice only."""
 
-    avatar_id: str
     name: str
     role: str
     voice: str
@@ -31,28 +30,23 @@ class Debater:
 
 DEBATERS: dict[DebateFormat, Debater] = {
     # Free debate: someone who argues like a well-read colleague who disagrees with you.
-    DebateFormat.FREE: Debater(
-        "richard", "Richard Hale", "Debate opponent", "Alnilam",
+    DebateFormat.FREE: Debater("Richard Hale", "Debate opponent", "Alnilam",
         "direct and conversational; concedes a good point in a sentence and then explains why it changes nothing",
     ),
     # Structured: a chairperson's discipline, keeping to the phase the debate is in.
-    DebateFormat.STRUCTURED: Debater(
-        "william", "William Okonjo", "Debate opponent", "Sadaltager",
+    DebateFormat.STRUCTURED: Debater("William Okonjo", "Debate opponent", "Sadaltager",
         "measured and orderly; signposts what it is doing — answering, objecting, or opening a new line",
     ),
     # Socratic: almost never asserts, and the questions do the damage.
-    DebateFormat.SOCRATIC: Debater(
-        "cara", "Cara Lindqvist", "Socratic interlocutor", "Erinome",
+    DebateFormat.SOCRATIC: Debater("Cara Lindqvist", "Socratic interlocutor", "Erinome",
         "asks rather than tells; every turn is a question that makes the last answer harder to hold",
     ),
     # Formal: longer, more rhetorical turns, as an Oxford-style opponent speaks.
-    DebateFormat.OXFORD: Debater(
-        "gabriel", "Gabriel Sartori", "Opposing speaker", "Charon",
+    DebateFormat.OXFORD: Debater("Gabriel Sartori", "Opposing speaker", "Charon",
         "formal and structured; speaks in complete arguments rather than short exchanges",
     ),
     # Devil's advocate: argues a side it is open about not necessarily holding.
-    DebateFormat.DEVILS_ADVOCATE: Debater(
-        "pablo", "Pablo Duarte", "Devil's advocate", "Iapetus",
+    DebateFormat.DEVILS_ADVOCATE: Debater("Pablo Duarte", "Devil's advocate", "Iapetus",
         "argues the other side as strongly as it can be argued, and says openly that this is what it is doing",
     ),
 }

@@ -87,27 +87,6 @@ cut into exact 15-minute FLAC chunks. `enable_word_confidence` is not supported 
 recognizer and is not requested. Batch recognition of even short audio can take several
 minutes; the pipeline polls every 20 seconds for up to about an hour.
 
-## The interviewer's face (optional)
-
-The interviewer is a person recorded seated at a desk, lip-synced live by our own LiveTalking
-server from the interviewer's own speech, and writing notes while the candidate answers. Setting
-it up, and recording the interviewers, is `infra/livetalking/README.md`.
-
-Two settings connect the API to it: `LIVETALKING_URL` in `app_config`, and the Terraform variable
-`livetalking_secret`, which creates the `livetalking-secret` secret and injects
-`LIVETALKING_SECRET` into the API service only. The face server gets that same value as
-`ATRIUM_SECRET`. Leave either empty and interviews run on audio alone with the plain interviewer
-tile.
-
-The browser never receives the secret: it calls `POST /interview/sessions/{id}/avatar-session`,
-and the server returns a 15-minute token naming the recording for that round, which the face
-server verifies. Panel interviews return one token per speaking colleague, so each has their own
-face; `LIVETALKING_AVATAR` overrides every face with a single recording, for testing.
-
-Cost is the GPU, not a per-minute fee: one Cloud Run instance with an L4 GPU (about $0.70/hour
-while running, scaling to zero) renders several faces at once, since only the person speaking
-needs inference. Watch concurrency rather than minutes as usage grows.
-
 ## Cost controls
 
 - Budget alerts at 50/90/100 %; at 100 % the worker sets `config/runtime.aiEnabled=false`

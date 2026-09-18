@@ -5,7 +5,6 @@ import { websocketUrl } from '@/platform/env'
 import { idToken } from '@/platform/firebase'
 import { LiveClient } from '@/platform/live/liveClient'
 import { CloseCode, type EndReason, type ServerMessage } from '@/platform/live/protocol'
-import type { AvatarRenderer } from '@/platform/avatar/types'
 import { PcmPlayer } from '@/platform/media/pcmPlayer'
 import { setKeepAwake } from '@/platform/native'
 
@@ -58,11 +57,6 @@ const INITIAL: LiveInterviewState = {
 
 /** After the interviewer stops, keep the mic closed briefly so the speaker's tail doesn't echo back. */
 const ECHO_TAIL_S = 0.3
-/** A face speaks the words about a second after our clock schedules them; keep the mic closed that much longer. */
-const FACE_VOICE_TAIL_S = 1.2
-const NO_FACES: Record<string, AvatarRenderer> = {}
-/** Hand a face its audio slightly early: it streams in pieces and needs a moment to start. */
-const FACE_HANDOFF_EARLY_MS = 120
 const MAX_CAPTIONS = 6
 
 const FAILURE_BY_CLOSE: Record<number, LiveFailure> = {
@@ -108,24 +102,11 @@ function appendCaption(captions: Caption[], next: Caption): Caption[] {
  */
 export function useLiveInterview(
   sessionId: string | null,
-  /**
-   * The interviewer's face, when there is one. It receives a copy of the same audio
-   * the player schedules; if it speaks for itself, the player runs silently so the
-   * voice comes from the track that matches the lips. Passing null changes nothing.
-   */
-  avatar: AvatarRenderer | null = null,
-  /** Panel colleagues whose own faces are on screen, by name; they speak their own questions. */
-  panelFaces: Record<string, AvatarRenderer> = NO_FACES,
-  /**
-   * Resolves when the call may connect: the interviewer's face has joined (or won't).
-   * The interviewer speaks as soon as the call connects, so its face must be there first.
-   */
+  /** Resolves when the call may connect. The interviewer speaks as soon as it does. */
   beforeConnect?: () => Promise<void>,
 ): LiveInterviewControls {
   const [state, setState] = useState<LiveInterviewState>(INITIAL)
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
-  // The face usually arrives after the call starts, so callbacks read it through a ref.
-  const avatarRef = useRef<AvatarRenderer | null>(avatar)
 
   const ctxRef = useRef<AudioContext | null>(null)
   const clientRef = useRef<LiveClient | null>(null)
@@ -139,28 +120,10 @@ export function useLiveInterview(
   const deadlineRef = useRef<number | null>(null)
   // Turns the server voiced for a panel colleague, by turn number.
   const panelTurnsRef = useRef(new Map<number, string>())
-  const panelFacesRef = useRef(panelFaces)
-  panelFacesRef.current = panelFaces
-  const dropFaceHandoffsRef = useRef<(() => void) | null>(null)
   const beforeConnectRef = useRef(beforeConnect)
   beforeConnectRef.current = beforeConnect
 
   const patch = useCallback((update: Partial<LiveInterviewState>) => setState((s) => ({ ...s, ...update })), [])
-
-  const pendingAvatarRef = useRef<(() => void) | null>(null)
-
-  useEffect(() => {
-    const apply = () => {
-      pendingAvatarRef.current = null
-      avatarRef.current = avatar
-      // A face that speaks for itself becomes the voice; ours keeps the clock and the recording.
-      playerRef.current?.setAudible(!avatar?.providesAudio)
-    }
-    // A face arriving mid-sentence takes over at the next turn, so the words already
-    // queued on our speaker are not cut off. Losing the face switches back at once.
-    if (avatar && playerRef.current?.isSpeaking) pendingAvatarRef.current = apply
-    else apply()
-  }, [avatar])
 
   const mediaMs = useCallback(() => {
     const ctx = ctxRef.current
@@ -211,58 +174,14 @@ export function useLiveInterview(
     t0Ref.current = ctx.currentTime
     const toMediaMs = (contextTime: number) => Math.max(0, (contextTime - t0Ref.current) * 1000)
 
-    // Face hand-offs still waiting for their moment; dropped when the interviewer is cut off.
-    const faceTimers = new Set<number>()
-    // Per turn: its pieces waiting for the turn to start, or 'started' once the face has it.
-    const faceTurns = new Map<number, Int16Array[] | 'started'>()
-    const dropFaceHandoffs = () => {
-      faceTimers.forEach((timer) => window.clearTimeout(timer))
-      faceTimers.clear()
-      // A cut-off turn stays cut off: its late pieces must not restart the face.
-      for (const seq of faceTurns.keys()) faceTurns.set(seq, [])
-    }
-    dropFaceHandoffsRef.current = dropFaceHandoffs
     const client = new LiveClient({
       url: websocketUrl(`/api/v1/sessions/${sessionId}/live`),
       idToken,
       appCheckToken,
       onAudio: ({ turnSeq, pcm }) => {
-        const player = playerRef.current
-        if (!player) return
-        const colleague = panelTurnsRef.current.get(turnSeq)
-        // The lead's face, a colleague's own face, or nobody's (our speaker plays it).
-        const face = colleague === undefined ? avatarRef.current : panelFacesRef.current[colleague]
-        const route = colleague === undefined ? 'lead' : face ? 'silent' : 'always'
-        const start = player.enqueue(turnSeq, pcm, route)
-        if (!face) return
-        // Audio arrives faster than it is spoken, and a face starts speaking whatever it is given
-        // at once. So each turn is handed over when it is due (faces never talk over each other),
-        // and from then on every piece goes straight through: the face buffers ahead, and a busy
-        // page can't starve it mid-sentence.
-        const handoff = faceTurns.get(turnSeq)
-        if (handoff === 'started') {
-          face.pushAudio(turnSeq, pcm)
-          return
-        }
-        if (handoff) {
-          handoff.push(pcm)
-          return
-        }
-        const due = (start - ctx.currentTime) * 1000 - FACE_HANDOFF_EARLY_MS
-        if (due <= 0) {
-          faceTurns.set(turnSeq, 'started')
-          face.pushAudio(turnSeq, pcm)
-          return
-        }
-        const waiting = [pcm]
-        faceTurns.set(turnSeq, waiting)
-        const timer = window.setTimeout(() => {
-          faceTimers.delete(timer)
-          faceTurns.set(turnSeq, 'started')
-          waiting.forEach((piece) => face.pushAudio(turnSeq, piece))
-        }, due)
-        faceTimers.add(timer)
-        for (const seq of faceTurns.keys()) if (seq < turnSeq - 8) faceTurns.delete(seq)
+        // Everyone speaks through our own player now: the lead interviewer and every panel
+        // colleague alike. Nothing else voices a turn.
+        playerRef.current?.enqueue(turnSeq, pcm)
       },
       onStatus: (status, code) => {
         if (status === 'failed') {
@@ -288,10 +207,7 @@ export function useLiveInterview(
             panelTurnsRef.current.set(message.turnSeq, message.name)
             break
           case 'interrupted':
-            dropFaceHandoffs()
             playerRef.current?.flush()
-            avatarRef.current?.interrupt()
-            Object.values(panelFacesRef.current).forEach((face) => face.interrupt())
             break
           case 'turn_complete':
             if (reconnectPendingRef.current) {
@@ -337,12 +253,10 @@ export function useLiveInterview(
         }
       },
       onSpeakingChange: (speaking) => {
-        if (!speaking) pendingAvatarRef.current?.()
         patch({ interviewerSpeaking: speaking })
       },
     })
     playerRef.current = player
-    player.setAudible(!avatarRef.current?.providesAudio)
 
     const mix = ctx.createMediaStreamDestination()
     source.connect(mix)
@@ -354,8 +268,7 @@ export function useLiveInterview(
     let lastLevelUpdate = 0
     capture.port.onmessage = (event: MessageEvent<{ pcm: Int16Array; startTime: number }>) => {
       const { pcm, startTime } = event.data
-      const faceVoiced = Boolean(avatarRef.current?.providesAudio) || Object.keys(panelFacesRef.current).length > 0
-      const tail = ECHO_TAIL_S + (faceVoiced ? FACE_VOICE_TAIL_S : 0)
+      const tail = ECHO_TAIL_S
       const echoWindow = player.isSpeaking || ctx.currentTime - lastPlaybackEndRef.current < tail
       const gated = mutedRef.current || (!headphonesRef.current && echoWindow)
       client.sendAudio(seq++, toMediaMs(startTime), gated ? new Int16Array(pcm.length) : pcm)
@@ -382,8 +295,6 @@ export function useLiveInterview(
     cleanupRef.current = () => {
       window.clearInterval(timer)
       panelTimers.forEach((t) => window.clearTimeout(t))
-      dropFaceHandoffs()
-      dropFaceHandoffsRef.current = null
       panelTurnsRef.current.clear()
       document.removeEventListener('visibilitychange', onVisible)
       capture.port.onmessage = null
@@ -420,10 +331,7 @@ export function useLiveInterview(
     start,
     end: useCallback(() => clientRef.current?.end(), []),
     interrupt: useCallback(() => {
-      dropFaceHandoffsRef.current?.()
       playerRef.current?.flush()
-      avatarRef.current?.interrupt()
-      Object.values(panelFacesRef.current).forEach((face) => face.interrupt())
     }, []),
     setHeadphones: useCallback(
       (on: boolean) => {

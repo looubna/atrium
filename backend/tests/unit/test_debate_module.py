@@ -150,11 +150,15 @@ def test_the_user_gets_the_side_they_chose_and_the_opponent_takes_the_other(aske
 
 
 def test_an_assigned_or_random_position_ignores_what_the_user_asked_for() -> None:
-    import random
+    from random import Random
 
-    user, ai = assign_positions(PositionMode.ASSIGNED, Position.FOR, rng=random.Random(1))
+    # Seeded so the toss is reproducible; the production path uses SystemRandom.
+    user, ai = assign_positions(PositionMode.ASSIGNED, Position.FOR, rng=Random(1))  # noqa: S311
     assert ai is user.opposite
-    sides = {assign_positions(PositionMode.RANDOM, None, rng=random.Random(seed))[0] for seed in range(20)}
+    sides = {
+        assign_positions(PositionMode.RANDOM, None, rng=Random(seed))[0]  # noqa: S311
+        for seed in range(20)
+    }
     # Over twenty tosses both sides come up, so it is a coin toss and not a fixed answer.
     assert sides == {Position.FOR, Position.AGAINST}
 

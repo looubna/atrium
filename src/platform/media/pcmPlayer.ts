@@ -9,9 +9,7 @@ export interface PlayerEvents {
   onSpeakingChange: (speaking: boolean) => void
 }
 
-export type PlaybackRoute = 'lead' | 'always' | 'silent'
-
-/** Scheduling headroom when the interviewer has no face to wait for. */
+/** Scheduling headroom before the first chunk of a turn plays. */
 const BASE_LEAD_S = 0.04
 /** A breath between two speakers when one turn is queued behind another. */
 const TURN_GAP_S = 0.45
@@ -19,7 +17,7 @@ const TURN_GAP_S = 0.45
 /**
  * Schedules the interviewer's 24 kHz PCM gaplessly on the shared AudioContext,
  * so playback times and microphone capture times use the same clock.
- * `output` feeds the session recorder; what reaches the speakers is routed per turn.
+ * `output` feeds the session recorder; everything also reaches the speakers.
  *
  * A new turn is queued behind the one still playing (the lead interviewer's
  * hand-over line, then a panel colleague's question); cutting a turn short is
@@ -33,10 +31,8 @@ export class PcmPlayer {
   private speaking = false
   private leadS = BASE_LEAD_S
 
-  /** The lead interviewer's voice: silenced while an avatar speaks it instead. */
+  /** Everything the candidate hears: the lead interviewer and every panel colleague. */
   private readonly speaker: GainNode
-  /** Voices only this player can give (panel colleagues): always audible. */
-  private readonly direct: GainNode
 
   constructor(
     private readonly ctx: AudioContext,
@@ -46,35 +42,14 @@ export class PcmPlayer {
     this.output = ctx.createGain()
     this.speaker = ctx.createGain()
     this.speaker.connect(ctx.destination)
-    this.direct = ctx.createGain()
-    this.direct.connect(ctx.destination)
-  }
-
-  /** False while another source (an avatar) is the voice the candidate hears. */
-  setAudible(audible: boolean): void {
-    this.speaker.gain.value = audible ? 1 : 0
   }
 
   get isSpeaking(): boolean {
     return this.speaking
   }
 
-  /**
-   * Holds playback back by the time an avatar needs to render the matching lip
-   * movement, so the voice and the face line up. 0 restores plain audio timing.
-   * Takes effect on the next turn; the current turn keeps its schedule.
-   */
-  setLead(ms: number): void {
-    this.leadS = BASE_LEAD_S + Math.max(0, ms) / 1000
-  }
-
-  /**
-   * `route`: 'lead' follows `setAudible`; 'always' is heard even while an avatar has the
-   * lead's voice (a colleague with no face); 'silent' is only recorded (a colleague whose
-   * own face speaks it).
-   */
   /** Returns when this chunk will start, on the AudioContext clock. */
-  enqueue(turnSeq: number, pcm: Int16Array, route: PlaybackRoute = 'lead'): number {
+  enqueue(turnSeq: number, pcm: Int16Array): number {
     if (pcm.length === 0) return this.ctx.currentTime
     const buffer = this.ctx.createBuffer(1, pcm.length, PLAYBACK_RATE)
     buffer.copyToChannel(int16ToFloat32(pcm), 0)
@@ -92,7 +67,7 @@ export class PcmPlayer {
     const source = this.ctx.createBufferSource()
     source.buffer = buffer
     source.connect(this.output)
-    if (route !== 'silent') source.connect(route === 'always' ? this.direct : this.speaker)
+    source.connect(this.speaker)
     const turn = sources
     source.onended = () => {
       turn.delete(source)
@@ -143,6 +118,5 @@ export class PcmPlayer {
     this.stopAll()
     this.output.disconnect()
     this.speaker.disconnect()
-    this.direct.disconnect()
   }
 }

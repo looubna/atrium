@@ -27,9 +27,8 @@ describe('interviewers', () => {
     expect(Object.keys(INTERVIEWERS).sort()).toEqual([...ROUND_TYPES].sort())
   })
 
-  it('gives every interviewer a recording, name and role', () => {
+  it('gives every interviewer a name and role', () => {
     for (const [round, person] of Object.entries(INTERVIEWERS)) {
-      expect(person.avatarId, round).toMatch(/^[a-z][a-z0-9_]{2,}$/)
       expect(person.name.length, round).toBeGreaterThan(2)
       expect(person.role.length, round).toBeGreaterThan(2)
     }
@@ -43,10 +42,11 @@ describe('interviewers', () => {
     expect(INTERVIEWERS.presentation.seniority).toBe('executive')
   })
 
-  it('puts a different face in each stage of a typical loop', () => {
+  it('puts a different person in each stage of a typical loop', () => {
     const loop: InterviewRoundType[] = ['screening', 'technical', 'system_design', 'hiring_manager']
-    const faces = new Set(loop.map((round) => INTERVIEWERS[round].avatarId))
-    expect(faces.size).toBe(loop.length)
+    expect(new Set(loop.map((round) => INTERVIEWERS[round].name)).size).toBe(loop.length)
+    // Voice is all the candidate has to tell them apart.
+    expect(new Set(loop.map((round) => INTERVIEWERS[round].voice)).size).toBe(loop.length)
   })
 
   it('never gives a face a voice of the other gender', () => {
@@ -61,8 +61,8 @@ describe('interviewers', () => {
   })
 
   it('falls back to a professional default for unknown or missing types', () => {
-    expect(interviewerFor('nonsense').avatarId).toBe(INTERVIEWERS.other.avatarId)
-    expect(interviewerFor(null).avatarId).toBe(INTERVIEWERS.other.avatarId)
+    expect(interviewerFor('nonsense').name).toBe(INTERVIEWERS.other.name)
+    expect(interviewerFor(null).name).toBe(INTERVIEWERS.other.name)
     expect(interviewerFor('hiring_manager').name).toBe('Richard Hale')
   })
 
@@ -70,7 +70,7 @@ describe('interviewers', () => {
   it('matches the names and roles the backend interviewer introduces itself with', () => {
     const python = readFileSync(new URL('../../../backend/app/modules/interview/interviewers.py', import.meta.url), 'utf8')
     for (const [round, person] of Object.entries(INTERVIEWERS)) {
-      const entry = new RegExp(`RoundType\\.${round.toUpperCase()}: Interviewer\\(\\s*"${person.avatarId}", "([^"]+)", "([^"]+)"`)
+      const entry = new RegExp(`RoundType\\.${round.toUpperCase()}: Interviewer\\(\\s*"([^"]+)", "([^"]+)"`)
       const match = entry.exec(python)
       expect(match, round).not.toBeNull()
       expect(match![1], round).toBe(person.name)

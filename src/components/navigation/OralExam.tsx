@@ -11,7 +11,6 @@ import { ApiError } from '@/platform/api/client'
 import { useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
 import { IconVideo, IconVideoOff } from '../ui/Icon'
-import { AvatarTile } from './AvatarTile'
 import { LeaveArrow, LiveOverlay, SceneCaption } from './LivePanels'
 
 /**
@@ -76,8 +75,8 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
   const camera = useCamera(started && cameraOn)
   // Eye contact in the room means looking at the examiner, not into a lens.
   const tracker = useMemo(() => ({ setting: 'screen' as const }), [])
-  const room = useInterviewRoom({ sessionId, camera: camera.stream, tracker, module: 'exam' })
-  const { live, liveActive, avatar, avatarFailed } = room
+  const room = useInterviewRoom({ sessionId, camera: camera.stream, tracker })
+  const { live, liveActive } = room
   const { phase } = live.state
 
   useEffect(() => {
@@ -93,25 +92,13 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
     return () => setSceneCovered(false)
   }, [setSceneCovered])
 
-  const name = avatar?.name ?? examiner.name
-  const speaking = live.state.interviewerSpeaking
-  const faceless = speaking && !room.leadFaceLive
+  const name = examiner.name
+  // The examiner has no face: the room photo carries the scene and the voice does the rest.
+  const faceless = live.state.interviewerSpeaking
 
   const professor = (
     <div className="relative size-full overflow-hidden bg-[#0b0d12]">
       <img src={roomPhoto} alt="" className="absolute inset-0 size-full object-cover" />
-      {avatar && !avatarFailed && (
-        <AvatarTile
-          variant="closeup"
-          renderer={avatar.renderer}
-          name={avatar.name}
-          role={avatar.role}
-          shown
-          onLive={room.setFaceOnScreen}
-          onFailed={room.onAvatarFailed}
-          onEnded={room.onFaceEnded}
-        />
-      )}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 pb-2 pt-8">
         <div className="text-[12.5px] font-semibold text-chalk">{name}</div>
         <div className="text-[11px] text-mist">{exam.subject || 'Oral exam'}</div>

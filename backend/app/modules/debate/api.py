@@ -39,7 +39,6 @@ from app.modules.debate.catalogs import (
 from app.modules.debate.debaters import debater_for
 from app.modules.debate.retry import harder
 from app.modules.debate.topics import needs_research, normalise_motion
-from app.modules.interview import livetalking
 from app.modules.interview.api import GRACE_MS, EmailNotVerified
 from app.platform.auth.dependencies import AuthUser
 from app.platform.clients import clients
@@ -292,30 +291,3 @@ async def debate_again(
     return _created(new_session_id, doc)
 
 
-@router.post("/sessions/{session_id}/avatar-session")
-async def avatar_session(
-    session_id: str,
-    user: Annotated[AuthUser, Depends(rate_limit("avatar_session", limit=30, window_seconds=3600))],
-) -> dict[str, Any]:
-    """A face for the opponent. A 503 simply means no face: the debate runs on voice alone."""
-    session_id = require_id(session_id)
-    await require_consents(user, ConsentKind.AI_PROCESSING)
-
-    snap = await clients.firestore().document(UserPaths(user.uid).session(session_id)).get()
-    if not snap.exists:
-        raise NotFound()
-    context = (snap.to_dict() or {}).get("context") or {}
-    person = debater_for(parse_format(context.get("format")))
-
-    settings = get_settings()
-    url = settings.livetalking_url.strip()
-    secret = settings.livetalking_secret.get_secret_value()
-    if not url or not secret:
-        raise ServiceUnavailable("no face server is configured")
-    override = settings.livetalking_avatar.strip()
-    return {
-        **livetalking.session(url, secret, override or person.avatar_id),
-        "name": person.name,
-        "role": person.role,
-        "panel": [],
-    }

@@ -37,7 +37,6 @@ compliance; privacy policy, terms and regulatory review are separate work.
 | Camera video (only when the camera is on) | reviewing your delivery | Cloud Storage (`video-*`) | Google Cloud AI (Gemini, low resolution) only with the separate `video_analysis` consent | 365 days |
 | Face measurements (per second: face visible, looking at camera or, in person, at the interviewers, smiling, head movement, and for in-person panels turned toward the speaker) | eye contact, expression and composure feedback | Cloud Storage (`face-metrics.json`); computed on the device from camera frames, which never leave it | — | 365 days, deleted with recordings |
 | Voice measurements (pitch movement and loudness changes per answer; never typical pitch) | intonation and projection feedback | Firestore session summary | — | until account deletion |
-| Interviewer's synthesized speech (not the candidate's) | driving the interviewer's face | not stored by us beyond the session audio we already keep | our own face server (`infra/livetalking`), while the call is live | not retained by us separately |
 | Transcripts, code snapshots | feedback | Cloud Storage / Firestore | Google Cloud AI (Gemini) | until account deletion |
 | Feedback, scores, progress | coaching | Firestore / Cloud Storage | — | until account deletion |
 | Usage counters | quotas | Firestore | — | until account deletion |

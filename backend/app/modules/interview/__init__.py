@@ -12,14 +12,13 @@ def descriptor() -> ModuleDescriptor:
     from app.modules.interview.agents.live_interviewer import InterviewLiveAgentFactory
     from app.modules.interview.api import router
     from app.modules.interview.applications_api import router as applications_router
-    from app.modules.interview.avatar_api import router as avatar_router
     from app.modules.interview.resumes_api import router as resumes_router
     from app.modules.interview.retry import build_retry_plan, competency_name
     from app.modules.interview.tasks import TASKS
 
     return ModuleDescriptor(
         id=MODULE_ID,
-        api_routers=(router, resumes_router, applications_router, avatar_router),
+        api_routers=(router, resumes_router, applications_router),
         services={
             "live_agent_factory": InterviewLiveAgentFactory(),
             "evaluator": InterviewEvaluator(),
