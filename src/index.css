@@ -1,0 +1,242 @@
+@import 'tailwindcss';
+
+/* Landscape phones are wide but very short, so width breakpoints alone let the
+   HUD swallow the viewport. `short:` lets panels shed weight by height. */
+@custom-variant short (@media (max-height: 560px));
+
+/* ------------------------------------------------------------------
+   Design tokens. The 3D world owns the screen; the UI is dark glass
+   floating over it, so every surface token is translucent by default.
+------------------------------------------------------------------- */
+@theme {
+  --color-ink-900: #07090c;
+  --color-ink-800: #0b0f14;
+  --color-ink-700: #121821;
+  --color-ink-600: #1b232e;
+
+  --color-chalk: #f3f5f7;
+  --color-mist: #aab6c2;
+  --color-faint: #6b7a89;
+
+  /* Accent: jade. Used for selection, focus and the brand mark. */
+  --color-jade-400: #5fe3a8;
+  --color-jade-500: #34d399;
+  --color-jade-600: #16a97a;
+
+  /* Category accents — mirrored in data/locations.ts for 3D materials. */
+  --color-cat-career: #6aa9ff;
+  --color-cat-academic: #c084fc;
+  --color-cat-social: #fbbf6b;
+  --color-cat-practice: #34d399;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+  body {
+    background: var(--color-ink-900);
+    /* Installed as a home-screen app there is no browser chrome to absorb a
+       rubber-band drag, and a pull-to-refresh mid-orbit is maddening. */
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    color: var(--color-chalk);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  canvas {
+    display: block;
+    outline: none;
+    touch-action: none;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-jade-500) 35%, transparent);
+  }
+}
+
+@layer components {
+  /*
+   * Every floating HUD cluster sits on a screen edge, and in standalone mode
+   * those edges are under the notch, the rounded corners and the home
+   * indicator. max() keeps the normal gutter on hardware with no insets.
+   */
+  .hud-inset {
+    --hud-pad: 0.75rem;
+    padding-top: max(var(--hud-pad), env(safe-area-inset-top));
+    padding-right: max(var(--hud-pad), env(safe-area-inset-right));
+    padding-bottom: max(var(--hud-pad), env(safe-area-inset-bottom));
+    padding-left: max(var(--hud-pad), env(safe-area-inset-left));
+  }
+
+  @media (min-width: 640px) {
+    .hud-inset {
+      --hud-pad: 1.25rem;
+    }
+  }
+
+  /* Frosted panel — the single surface primitive for all floating UI. */
+  .glass {
+    background: linear-gradient(
+      165deg,
+      color-mix(in oklab, var(--color-ink-700) 82%, transparent),
+      color-mix(in oklab, var(--color-ink-900) 88%, transparent)
+    );
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border: 1px solid color-mix(in oklab, white 9%, transparent);
+    box-shadow:
+      0 1px 0 0 color-mix(in oklab, white 7%, transparent) inset,
+      0 20px 50px -12px rgb(0 0 0 / 0.7),
+      0 2px 8px -2px rgb(0 0 0 / 0.5);
+  }
+
+  /* Hairline label styling used across the HUD. */
+  .eyebrow {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+  }
+}
+
+@layer utilities {
+  /* Cinematic grade over the canvas: vignette + fine grain.
+     Cheaper than a postprocessing pass and never touches the GPU budget. */
+  .grade-vignette {
+    background: radial-gradient(
+      120% 90% at 50% 42%,
+      transparent 38%,
+      rgb(4 6 9 / 0.32) 78%,
+      rgb(3 4 6 / 0.62) 100%
+    );
+  }
+  .grade-grain {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+    opacity: 0.05;
+  }
+
+  .anim-rise {
+    animation: rise 0.5s var(--ease-out-expo) both;
+  }
+  .anim-fade {
+    animation: fade 0.4s var(--ease-out-expo) both;
+  }
+  /* Practice feedback: bars grow from their start, ticks rise, glows breathe once. */
+  .anim-grow-x {
+    transform-origin: left center;
+    animation: grow-x 0.9s var(--ease-out-expo) both;
+  }
+  .anim-tick {
+    transform-origin: bottom center;
+    animation: tick 0.45s var(--ease-out-expo) both;
+  }
+  .anim-glow {
+    animation: glow 1.8s var(--ease-out-expo) 0.4s both;
+  }
+  /* A light sweeping over the visitor pass while it waits to be scanned. */
+  .anim-scan {
+    animation: scan 2s var(--ease-in-out-quart) infinite;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes scan {
+  0% {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  20%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes tick {
+  from {
+    opacity: 0;
+    transform: scaleY(0.2);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes glow {
+  0% {
+    box-shadow: 0 0 0 0 rgb(95 227 168 / 0);
+  }
+  35% {
+    box-shadow: 0 0 0 4px rgb(95 227 168 / 0.25), 0 0 28px rgb(95 227 168 / 0.25);
+  }
+  100% {
+    box-shadow: 0 0 0 1px rgb(95 227 168 / 0.25), 0 0 18px rgb(95 227 168 / 0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-grow-x,
+  .anim-tick,
+  .anim-glow,
+  .anim-rise,
+  .anim-fade {
+    animation: none;
+  }
+}

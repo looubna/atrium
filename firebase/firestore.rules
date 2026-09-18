@@ -1,0 +1,103 @@
+rules_version = '2';
+
+// Clients only ever READ their own data; every write goes through the API,
+// which validates input and derives identity from the verified token.
+// Each readable collection is listed explicitly, so any collection not named
+// here (server-only state, future subcollections) is denied by default.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow get: if isOwner(uid);
+
+      match /consents/{kind} {
+        allow read: if isOwner(uid);
+      }
+
+      match /usage/{period} {
+        allow read: if isOwner(uid);
+      }
+
+      // Practice Center progress and round history: written only by the API.
+      match /practice/{docId} {
+        allow read: if isOwner(uid);
+      }
+
+      match /practiceAttempts/{attemptId} {
+        allow read: if isOwner(uid);
+      }
+
+      match /resumes/{resumeId} {
+        allow read: if isOwner(uid);
+      }
+
+      match /applications/{applicationId} {
+        allow read: if isOwner(uid);
+
+        match /blueprints/{blueprintId} {
+          allow read: if isOwner(uid);
+        }
+      }
+
+      // Oral exam courses, the materials added to them and the analysis of those
+      // materials. Written only by the API.
+      match /courses/{courseId} {
+        allow read: if isOwner(uid);
+
+        match /materials/{materialId} {
+          allow read: if isOwner(uid);
+        }
+
+        match /analyses/{analysisId} {
+          allow read: if isOwner(uid);
+        }
+      }
+
+      // Debates, the documents attached to them, and the prepared brief each debate is
+      // argued from. Written only by the API.
+      match /debates/{debateId} {
+        allow read: if isOwner(uid);
+
+        match /materials/{materialId} {
+          allow read: if isOwner(uid);
+        }
+
+        match /preparations/{prepId} {
+          allow read: if isOwner(uid);
+        }
+      }
+
+      match /sessions/{sessionId} {
+        allow read: if isOwner(uid);
+
+        match /turns/{turnId} {
+          allow read: if isOwner(uid);
+        }
+
+        match /codeSnapshots/{snapshotId} {
+          allow read: if isOwner(uid);
+        }
+
+        match /evaluations/{runId} {
+          allow read: if isOwner(uid);
+
+          match /events/{eventId} {
+            allow read: if isOwner(uid);
+          }
+        }
+      }
+
+      match /competencies/{competencyId} {
+        allow read: if isOwner(uid);
+      }
+
+      match /competencyHistory/{entryId} {
+        allow read: if isOwner(uid);
+      }
+    }
+  }
+}

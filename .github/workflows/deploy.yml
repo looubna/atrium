@@ -1,0 +1,147 @@
+name: Deploy
+
+# main → build once → staging (infrastructure, rules, services, smoke tests)
+#      → manual approval (GitHub Environment "production") → same image to production.
+#
+# Repository variables (Settings → Variables), per environment:
+#   <ENV>_PROJECT, <ENV>_WIF_PROVIDER, <ENV>_DEPLOYER_SA, <ENV>_TERRAFORM_SA
+# where <ENV> is STAGING or PROD. Values come from `terraform output platform`.
+# No keys or secrets are stored in GitHub.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  REGION: us-central1
+  IMAGE_NAME: atrium-backend
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      image: ${{ steps.push.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Build and push
+        id: push
+        run: |
+          registry="${REGION}-docker.pkg.dev/${{ vars.STAGING_PROJECT }}/atrium"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build --tag "${registry}/${IMAGE_NAME}:${GITHUB_SHA}" backend
+          docker push "${registry}/${IMAGE_NAME}:${GITHUB_SHA}"
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "${registry}/${IMAGE_NAME}:${GITHUB_SHA}")
+          echo "image=${digest}" >> "$GITHUB_OUTPUT"
+
+  staging:
+    name: Deploy to staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_TERRAFORM_SA }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Terraform apply
+        working-directory: infra/terraform/envs/staging
+        run: |
+          terraform init -input=false -backend-config=backend.hcl
+          terraform apply -input=false -auto-approve
+      - name: Firestore rules and indexes
+        working-directory: firebase
+        run: |
+          npm ci
+          npx firebase deploy --only firestore:rules,firestore:indexes --project ${{ vars.STAGING_PROJECT }} --non-interactive
+      - name: Deploy services
+        run: |
+          for service in atrium-api atrium-worker; do
+            gcloud run deploy "$service" --image "${{ needs.build.outputs.image }}" \
+              --region "$REGION" --project "${{ vars.STAGING_PROJECT }}" --quiet
+          done
+      - name: Smoke tests
+        run: |
+          api=$(gcloud run services describe atrium-api --region "$REGION" --project "${{ vars.STAGING_PROJECT }}" --format='value(status.url)')
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$api/health")" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$api/api/v1/me")" = "401"
+          worker=$(gcloud run services describe atrium-worker --region "$REGION" --project "${{ vars.STAGING_PROJECT }}" --format='value(status.url)')
+          # The worker must never accept unauthenticated calls.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$worker/internal/cron/reconcile")
+          test "$code" = "403" -o "$code" = "404"
+
+  production:
+    name: Deploy to production
+    needs: [build, staging]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Pull the tested image from staging
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker pull "${{ needs.build.outputs.image }}"
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.PROD_WIF_PROVIDER }}
+          service_account: ${{ vars.PROD_TERRAFORM_SA }}
+      - name: Terraform apply
+        working-directory: infra/terraform/envs/prod
+        run: |
+          terraform init -input=false -backend-config=backend.hcl
+          terraform apply -input=false -auto-approve
+      - name: Firestore rules and indexes
+        working-directory: firebase
+        run: |
+          npm ci
+          npx firebase deploy --only firestore:rules,firestore:indexes --project ${{ vars.PROD_PROJECT }} --non-interactive
+      - name: Push image and deploy services
+        run: |
+          registry="${REGION}-docker.pkg.dev/${{ vars.PROD_PROJECT }}/atrium"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker tag "${{ needs.build.outputs.image }}" "${registry}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "${registry}/${IMAGE_NAME}:${GITHUB_SHA}"
+          digest=$(docker inspect --format='{{index .RepoDigests 1}}' "${registry}/${IMAGE_NAME}:${GITHUB_SHA}" 2>/dev/null || true)
+          image="${digest:-${registry}/${IMAGE_NAME}:${GITHUB_SHA}}"
+          for service in atrium-api atrium-worker; do
+            gcloud run deploy "$service" --image "$image" --region "$REGION" --project "${{ vars.PROD_PROJECT }}" --quiet
+          done
+      - name: Smoke tests
+        run: |
+          api=$(gcloud run services describe atrium-api --region "$REGION" --project "${{ vars.PROD_PROJECT }}" --format='value(status.url)')
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$api/health")" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$api/api/v1/me")" = "401"

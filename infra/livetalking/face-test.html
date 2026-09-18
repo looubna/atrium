@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Face test</title>
+    <style>
+      :root { color-scheme: dark }
+      body { margin: 0; background: #0b0d12; color: #e8eaf0; font: 14px/1.5 system-ui, sans-serif }
+      main { max-width: 900px; margin: 0 auto; padding: 24px 16px 40px }
+      h1 { font-size: 18px; margin: 0 0 4px }
+      p.sub { margin: 0 0 16px; color: #9aa3b5 }
+      .stage { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden }
+      video { width: 100%; height: 100%; object-fit: cover }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 }
+      button { border: 1px solid #2b3245; background: #161b26; color: #e8eaf0; border-radius: 999px; padding: 9px 16px; font: inherit; cursor: pointer }
+      button:hover:not(:disabled) { background: #1f2735 }
+      button:disabled { opacity: .5; cursor: default }
+      label { display: flex; align-items: center; gap: 6px; color: #9aa3b5 }
+      input[type=text] { flex: 1; min-width: 180px; background: #161b26; border: 1px solid #2b3245; color: inherit; border-radius: 8px; padding: 9px 12px; font: inherit }
+      #log { white-space: pre-wrap; color: #9aa3b5; font: 12px/1.6 ui-monospace, monospace; margin-top: 12px }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Interviewer face test</h1>
+      <p class="sub">
+        Drives the app's own renderer against the LiveTalking server. Nothing here touches the cloud:
+        the voice is your microphone, so whatever you say comes out of her mouth, in sync.
+        Wear headphones, or the microphone will pick her up again.
+      </p>
+      <div class="stage"><video id="face" playsinline></video></div>
+      <div class="row">
+        <input id="avatar" type="text" value="evelyn" aria-label="Face id" />
+        <button id="join">Show the interviewer</button>
+        <button id="talk" disabled>Hold to speak</button>
+        <button id="notes" disabled>Writing notes</button>
+        <button id="idle" disabled>Just listening</button>
+      </div>
+      <div id="log"></div>
+    </main>
+    <script type="module">
+      const { LiveTalkingRenderer } = await import('/src/platform/avatar/liveTalkingRenderer.ts')
+      const video = document.getElementById('face')
+      const log = (m) => (document.getElementById('log').textContent += m + '\n')
+      let renderer = null
+      let context = null
+      let mic = null
+
+      document.getElementById('join').onclick = async (event) => {
+        event.target.disabled = true
+        const url = `${location.protocol}//${location.hostname}:8010`
+        renderer = new LiveTalkingRenderer({ url, token: document.getElementById('avatar').value.trim() })
+        const started = performance.now()
+        try {
+          await renderer.attach(video)
+          log(`she joined in ${Math.round(performance.now() - started)} ms`)
+          for (const id of ['talk', 'notes', 'idle']) document.getElementById(id).disabled = false
+        } catch (error) {
+          log(`could not show her: ${error.message}`)
+          log('is the face server running on :8010, and does that face exist in its data/avatars?')
+          event.target.disabled = false
+        }
+      }
+
+      // Hold the button: your voice goes to the server as the interviewer's speech.
+      const talk = document.getElementById('talk')
+      const open = async () => {
+        if (mic) return
+        context = context ?? new AudioContext({ sampleRate: 24000 })
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } })
+        const source = context.createMediaStreamSource(stream)
+        const node = context.createScriptProcessor(2048, 1, 1)
+        node.onaudioprocess = (event) => {
+          if (!mic?.live) return
+          const input = event.inputBuffer.getChannelData(0)
+          const pcm = new Int16Array(input.length)
+          for (let i = 0; i < input.length; i++) pcm[i] = Math.max(-1, Math.min(1, input[i])) * 32767
+          renderer.pushAudio(1, pcm)
+        }
+        source.connect(node)
+        node.connect(context.destination)
+        mic = { stream, node, live: false }
+      }
+      const press = async () => {
+        await open()
+        mic.live = true
+        talk.textContent = 'Speak now…'
+      }
+      const release = () => {
+        if (mic) mic.live = false
+        talk.textContent = 'Hold to speak'
+      }
+      talk.onpointerdown = press
+      talk.onpointerup = release
+      talk.onpointerleave = release
+
+      document.getElementById('notes').onclick = () => renderer.setState('listening')
+      document.getElementById('idle').onclick = () => renderer.setState('neutral')
+    </script>
+  </body>
+</html>

@@ -1,0 +1,47 @@
+node_modules
+dist
+scratch
+.local-objects
+.DS_Store
+*.local
+*.tsbuildinfo
+coverage
+
+# Environment and credentials — never commit
+.env
+.env.*
+!.env.example
+!.env.development
+!.env.staging
+*.pem
+*.p8
+*.p12
+*-key.json
+service-account*.json
+GoogleService-Info.plist
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Firebase
+.firebase/
+*-debug.log
+firebase/emulator-data/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# iOS / Capacitor
+ios/App/build/
+ios/App/Pods/
+ios/DerivedData/
+xcuserdata/

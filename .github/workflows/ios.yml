@@ -1,0 +1,89 @@
+name: iOS
+
+# Every change to the app: compile the Capacitor iOS project for the simulator (no signing).
+# On main, once Apple signing is configured (repository variable IOS_SIGNING_READY=true):
+# archive with App Store Connect API key signing and upload to TestFlight.
+#
+# Production secrets used by the TestFlight job (Settings → Environments → production):
+#   APPSTORE_API_KEY_ID, APPSTORE_API_ISSUER_ID, APPSTORE_API_PRIVATE_KEY (p8 contents),
+#   IOS_GOOGLE_SERVICE_INFO_BASE64 (terraform output ios_google_service_info_base64)
+# Production variables: APPLE_TEAM_ID and the VITE_* Firebase web config values.
+
+on:
+  pull_request:
+    paths: ["src/**", "public/**", "ios/**", "capacitor.config.ts", "package.json", "package-lock.json"]
+  push:
+    branches: [main]
+    paths: ["src/**", "public/**", "ios/**", "capacitor.config.ts", "package.json", "package-lock.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator-build:
+    name: Compile for the simulator
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+      - name: Build
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+
+  testflight:
+    name: Upload to TestFlight
+    if: github.ref == 'refs/heads/main' && vars.IOS_SIGNING_READY == 'true'
+    needs: simulator-build
+    runs-on: macos-15
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Production web build
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+        run: npm run build
+      - run: npx cap sync ios
+      - name: Firebase and signing material
+        env:
+          GOOGLE_SERVICE_INFO: ${{ secrets.IOS_GOOGLE_SERVICE_INFO_BASE64 }}
+          API_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+        run: |
+          echo "$GOOGLE_SERVICE_INFO" | base64 --decode > ios/App/App/GoogleService-Info.plist
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$API_KEY" > "$RUNNER_TEMP/keys/AuthKey_${API_KEY_ID}.p8"
+      - name: Archive and upload
+        env:
+          API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+          TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          auth=(-authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_${API_KEY_ID}.p8"
+                -authenticationKeyID "$API_KEY_ID" -authenticationKeyIssuerID "$API_ISSUER_ID")
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Atrium.xcarchive" \
+            -allowProvisioningUpdates "${auth[@]}" DEVELOPMENT_TEAM="$TEAM_ID" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" archive
+          sed "s/TEAM_ID_PLACEHOLDER/${TEAM_ID}/" ios/ExportOptions.plist > "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Atrium.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates "${auth[@]}"

@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// No client reads or writes objects through the Firebase SDK. Uploads use
+// backend-issued resumable sessions bound to server-built paths, and downloads
+// use short-lived signed URLs, so every access is authorized, audited and
+// subject to retention by the API.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

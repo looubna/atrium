@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Atrium — phone preview</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(120% 90% at 50% -10%, #1b242e 0%, #0d1218 55%, #080b0f 100%);
+    color: #aab6c2;
+    font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 18px;
+    border-bottom: 1px solid rgba(255,255,255,.07);
+    background: rgba(8,11,15,.7);
+    backdrop-filter: blur(12px);
+  }
+  .brand { display: flex; align-items: center; gap: 9px; margin-right: 6px; }
+  .brand b { color: #f3f5f7; font-size: 13.5px; font-weight: 600; letter-spacing: -.01em; }
+  .brand span { color: #6b7a89; font-size: 11px; }
+
+  .seg { display: flex; gap: 4px; padding: 3px; border-radius: 11px; background: rgba(255,255,255,.05); }
+  .seg button {
+    appearance: none; border: 0; cursor: pointer;
+    padding: 6px 11px; border-radius: 8px;
+    background: transparent; color: #aab6c2;
+    font: inherit; font-size: 12px;
+    transition: background .18s, color .18s;
+  }
+  .seg button:hover { background: rgba(255,255,255,.07); color: #f3f5f7; }
+  .seg button[aria-pressed="true"] { background: rgba(52,211,153,.15); color: #5fe3a8; box-shadow: 0 0 0 1px rgba(52,211,153,.3) inset; }
+
+  .act { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .act button {
+    appearance: none; cursor: pointer;
+    height: 32px; padding: 0 12px; border-radius: 9px;
+    border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04);
+    color: #aab6c2; font: inherit; font-size: 12px;
+    transition: background .18s, color .18s, border-color .18s;
+  }
+  .act button:hover { background: rgba(255,255,255,.09); color: #f3f5f7; border-color: rgba(255,255,255,.2); }
+  .dims { color: #6b7a89; font-size: 11.5px; font-variant-numeric: tabular-nums; min-width: 96px; }
+
+  .stage { position: relative; overflow: hidden; padding: 16px; min-height: 0; }
+  .fit { position: absolute; transform-origin: top left; }
+
+  /* --- device --- */
+  .phone {
+    position: relative;
+    padding: var(--bezel, 12px);
+    border-radius: var(--radius, 60px);
+    background: linear-gradient(150deg, #6d7681 0%, #2f363d 18%, #1a1f24 42%, #2b3239 70%, #656e78 100%);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,.10),
+      0 2px 2px rgba(255,255,255,.16) inset,
+      0 40px 80px -26px rgba(0,0,0,.85);
+  }
+  .screen {
+    position: relative; overflow: hidden; background: #07090c;
+    border-radius: calc(var(--radius, 60px) - var(--bezel, 12px));
+    box-shadow: 0 0 0 1.5px #05070a inset;
+  }
+  iframe { display: block; border: 0; background: #07090c; }
+
+  .island {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 92px; height: 27px; border-radius: 999px; background: #000;
+    pointer-events: none; z-index: 2;
+  }
+  .island::after {
+    content: ""; position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    width: 8px; height: 8px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #2b3a4a, #0a0f14 70%);
+  }
+  .bar {
+    position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    width: 112px; height: 5px; border-radius: 999px; background: rgba(255,255,255,.6);
+    pointer-events: none; z-index: 2;
+  }
+  .btn { position: absolute; background: linear-gradient(180deg,#5c656f,#2a3037); border-radius: 2px; }
+  .btn.sil  { left: -2.5px; top: 112px; width: 3px;   height: 28px; }
+  .btn.up   { left: -3px;   top: 158px; width: 3.5px; height: 52px; }
+  .btn.down { left: -3px;   top: 222px; width: 3.5px; height: 52px; }
+  .btn.pwr  { right: -3px;  top: 186px; width: 3.5px; height: 82px; }
+
+  .landscape .island { top: 50%; left: 10px; transform: translateY(-50%); width: 27px; height: 92px; }
+  .landscape .island::after { right: 50%; top: 10px; transform: translateX(50%); }
+  .landscape .bar { bottom: 50%; left: auto; right: 8px; transform: translateY(50%); width: 5px; height: 112px; }
+
+  .zoom {
+    color: #4d5a67; font-size: 11px; font-variant-numeric: tabular-nums;
+    min-width: 34px; text-align: right;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path d="M12 3 21 8v8l-9 5-9-5V8z" stroke="#5fe3a8" stroke-width="1.5" stroke-linejoin="round"/>
+      <circle cx="12" cy="12" r="2.6" fill="#5fe3a8"/>
+    </svg>
+    <b>Atrium</b><span>phone preview</span>
+  </div>
+
+  <div class="seg" id="devices"></div>
+
+  <div class="act">
+    <span class="dims" id="dims"></span>
+    <span class="zoom" id="zoom"></span>
+    <button id="rotate">Rotate</button>
+    <button id="reload">Reload</button>
+  </div>
+</header>
+
+<div class="stage">
+  <div class="fit" id="fit">
+    <div class="phone" id="phone">
+      <div class="screen" id="screen">
+        <div class="island"></div>
+        <iframe id="app" src="/" title="Atrium" allow="camera; microphone; autoplay; display-capture"></iframe>
+        <div class="bar"></div>
+      </div>
+      <i class="btn sil"></i><i class="btn up"></i><i class="btn down"></i><i class="btn pwr"></i>
+    </div>
+  </div>
+</div>
+
+
+<script>
+  // Logical viewports, i.e. what the app actually sees.
+  const DEVICES = [
+    { id: 'ip14',  label: 'iPhone 14 Pro', w: 393, h: 852, bezel: 12, radius: 60 },
+    { id: 'ipse',  label: 'iPhone SE',     w: 375, h: 667, bezel: 14, radius: 44 },
+    { id: 'px7',   label: 'Pixel 7',       w: 412, h: 915, bezel: 11, radius: 50 },
+    { id: 'ipad',  label: 'iPad mini',     w: 744, h: 1133, bezel: 16, radius: 42 },
+  ];
+
+  const $ = (s) => document.querySelector(s);
+  const seg = $('#devices'), phone = $('#phone'), screen = $('#screen');
+  const app = $('#app'), fit = $('#fit'), dims = $('#dims');
+
+  let current = DEVICES[0];
+  let landscape = false;
+
+  DEVICES.forEach((d) => {
+    const b = document.createElement('button');
+    b.textContent = d.label;
+    b.onclick = () => { current = d; render(); };
+    b.dataset.id = d.id;
+    seg.append(b);
+  });
+
+  function render() {
+    const w = landscape ? current.h : current.w;
+    const h = landscape ? current.w : current.h;
+
+    phone.style.setProperty('--bezel', current.bezel + 'px');
+    phone.style.setProperty('--radius', current.radius + 'px');
+    phone.classList.toggle('landscape', landscape);
+
+    screen.style.width = w + 'px';
+    screen.style.height = h + 'px';
+    app.style.width = w + 'px';
+    app.style.height = h + 'px';
+
+    dims.textContent = w + ' x ' + h;
+    [...seg.children].forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.id === current.id)));
+    scaleToFit();
+  }
+
+  // Scale the device to fit, then place it explicitly.
+  //
+  // Centring via `place-items` is not usable here: once the unscaled device is
+  // taller than the stage it overflows in one direction only, so its centre —
+  // and therefore the transform origin — is already off-screen, and scaling
+  // about it leaves the phone clipped. Positioning from a top-left origin makes
+  // the result exact at any window size.
+  function scaleToFit() {
+    fit.style.transform = 'scale(1)';
+
+    const stage = document.querySelector('.stage');
+    const cs = getComputedStyle(stage);
+    const padL = parseFloat(cs.paddingLeft);
+    const padT = parseFloat(cs.paddingTop);
+    const availW = stage.clientWidth - padL - parseFloat(cs.paddingRight);
+    const availH = stage.clientHeight - padT - parseFloat(cs.paddingBottom);
+
+    const box = phone.getBoundingClientRect();
+    const s = Math.min(1, availW / box.width, availH / box.height);
+
+    fit.style.transform = 'scale(' + s.toFixed(4) + ')';
+    fit.style.left = Math.round(padL + (availW - box.width * s) / 2) + 'px';
+    fit.style.top = Math.round(padT + (availH - box.height * s) / 2) + 'px';
+    document.getElementById('zoom').textContent = Math.round(s * 100) + '%';
+  }
+
+  $('#rotate').onclick = () => { landscape = !landscape; render(); };
+  $('#reload').onclick = () => { app.src = app.src; };
+  addEventListener('resize', scaleToFit);
+  render();
+</script>
+</body>
+</html>
