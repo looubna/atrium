@@ -155,3 +155,13 @@ async def test_task_names_and_recording_queue_dedupe() -> None:
     request = TaskRequest(queue="processing", path="/internal/tasks/x", payload={}, name=name)
     assert await queue.enqueue(request) is True
     assert await queue.enqueue(request) is False
+
+
+def test_the_opening_can_be_held_until_the_candidate_sits_down() -> None:
+    from app.platform.agents.live_protocol import Begin, parse_auth, parse_control
+
+    held = parse_auth('{"type": "auth", "idToken": "t", "holdOpening": true}')
+    assert held.holdOpening is True
+    # Clients that don't ask get the interviewer straight away, as before.
+    assert parse_auth('{"type": "auth", "idToken": "t"}').holdOpening is False
+    assert isinstance(parse_control('{"type": "begin"}'), Begin)

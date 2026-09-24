@@ -19,10 +19,12 @@ from app.modules.exam import MODULE_ID
 from app.modules.exam.catalogs import ExamStyle, parse_style
 from app.modules.exam.examiners import examiner_for
 from app.modules.exam.knowledge import style_from_materials
+from app.modules.interview import livetalking
 from app.modules.interview.api import GRACE_MS, EmailNotVerified
 from app.modules.interview.sanitize import clean_phrase
 from app.platform.auth.dependencies import AuthUser
 from app.platform.clients import clients
+from app.platform.faces import face_server
 from app.platform.firestore.paths import UserPaths, client_uuid, require_id
 from app.platform.ratelimit import rate_limit
 from app.platform.runtime_config import ai_enabled
@@ -195,3 +197,32 @@ async def retry_session(
     return _created(new_session_id, doc)
 
 
+@router.post("/sessions/{session_id}/avatar-session")
+async def avatar_session(
+    session_id: str,
+    user: Annotated[AuthUser, Depends(rate_limit("avatar_session", limit=30, window_seconds=3600))],
+) -> dict[str, Any]:
+    """A face for the examiner. A 503 simply means no face: the exam runs on voice alone."""
+    session_id = require_id(session_id)
+    await require_consents(user, ConsentKind.AI_PROCESSING)
+
+    snap = await clients.firestore().document(UserPaths(user.uid).session(session_id)).get()
+    if not snap.exists:
+        raise NotFound()
+    context = (snap.to_dict() or {}).get("context") or {}
+    person = examiner_for(context.get("examStyle"))
+
+    settings = get_settings()
+    url = await face_server().ready_url()  # "" while it is still starting
+    secret = settings.livetalking_secret.get_secret_value()
+    if not url or not secret:
+        raise ServiceUnavailable("no face server is configured")
+    override = settings.livetalking_avatar.strip()
+    return {
+        **livetalking.session(
+            url, secret, livetalking.face_for(person.avatar_id, settings.livetalking_faces, override)
+        ),
+        "name": person.name,
+        "role": person.role,
+        "panel": [],
+    }

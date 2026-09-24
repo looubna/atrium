@@ -89,6 +89,25 @@ class Settings(BaseSettings):
 
     app_check_enforced: bool = True
     analytics_salt: SecretStr = SecretStr("")
+    # Faces: people recorded seated at a desk, lip-synced by our LiveTalking server. Unset URL
+    # simply means no face — the interview runs on audio alone — so this is deliberately not
+    # required in deployed environments. The secret signs the tokens the server checks;
+    # `livetalking_faces` maps a person to the recording that plays them ("gabriel=william,..."),
+    # so one recorded face can stand in for several people; anyone not listed gets
+    # `livetalking_avatar`, the stand-in for everyone not yet recorded.
+    livetalking_url: str = ""
+    livetalking_secret: SecretStr = SecretStr("")
+    livetalking_avatar: str = ""
+    livetalking_faces: str = ""
+    # Scale to zero: the face server's GPU VMs, as "zone/name,zone/name" in failover order. They
+    # sit stopped until a candidate opens the setup of a session with a face, are started then,
+    # and stop themselves once idle (`ATRIUM_IDLE_STOP_S` on the VM). Their address is read from
+    # Compute Engine, so it may change on every start. Empty: `livetalking_url` is the one server.
+    face_vms: str = ""
+    face_vm_port: int = 8010
+    # The project the VMs live in, when it is not this environment's (local runs on emulators).
+    face_vm_project: str = ""
+
     recording_retention_days: int = Field(default=365, ge=1, le=3650)
     free_live_minutes_month: int = Field(default=120, ge=0)
     max_json_bytes: int = 1_048_576
@@ -124,7 +143,9 @@ class Settings(BaseSettings):
                 f"allowed: {sorted(allowed)}"
             )
         if self.app_env != Env.PROD:
-            for name in ("google_cloud_project", "vertex_project", "user_content_bucket", "processing_bucket"):
+            for name in (
+                "google_cloud_project", "vertex_project", "user_content_bucket", "processing_bucket", "face_vm_project",
+            ):
                 value = getattr(self, name) or ""
                 if any(p in value for p in PROD_PROJECTS):
                     raise ValueError(f"{name} references a production resource outside APP_ENV=prod")

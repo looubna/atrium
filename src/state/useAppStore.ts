@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { MEETING_ATTENDEE_IDS } from '@/data/meeting'
+import { AUDIENCE_ATTENDEE_IDS, MEETING_ATTENDEE_IDS } from '@/data/meeting'
 import { LOCATIONS_BY_ID } from '@/data/locations'
 import type { PracticeFormat, SessionSetup } from '@/data/practice'
 import { releaseDeck, type Deck } from '@/lib/loadDeck'
@@ -20,6 +20,9 @@ export type View =
   | 'drill'
   | 'talk'
   | 'exam'
+  | 'debate'
+  | 'admission'
+  | 'language'
   | 'feedback'
 
 /**
@@ -60,7 +63,6 @@ interface AppState {
   /** Audience members (by seat id) with a hand up, oldest first. */
   raisedHands: number[]
   /** Seat ids of everyone in the audience who can raise a hand. */
-  audienceIds: number[]
   /** The lectern microphone: closed, listening, or hearing the presenter. */
   micState: 'off' | 'on' | 'speaking'
   /** A full-screen view (the meeting-room footage) hides the 3D scene, so it stops rendering. */
@@ -99,7 +101,6 @@ interface AppState {
   /** The longest-waiting question has been answered. */
   lowerOldestHand: () => void
   lowerHands: () => void
-  setAudienceIds: (ids: number[]) => void
   setMicState: (state: 'off' | 'on' | 'speaking') => void
   setSceneCovered: (covered: boolean) => void
   setScreenStream: (stream: MediaStream | null) => void
@@ -133,13 +134,16 @@ export function isLiveInPerson(session: SessionSetup | null | undefined): boolea
 const MAX_HANDS = 3
 
 /** Views that are a screen of their own, entered from the location panel without going indoors. */
-const OWN_SCREEN_VIEWS: View[] = ['drill', 'talk', 'exam']
+const OWN_SCREEN_VIEWS: View[] = ['drill', 'talk', 'exam', 'debate', 'admission', 'language']
 
 /** True when this session opens its own screen rather than a building. */
 export const opensOwnScreen = (session: SessionSetup | null | undefined): boolean =>
   session?.format.destination === 'drill' ||
   session?.format.destination === 'talk' ||
-  session?.format.destination === 'exam'
+  session?.format.destination === 'exam' ||
+  session?.format.destination === 'debate' ||
+  // The scholarship call, once the preparation has a session to join.
+  (session?.format.destination === 'admission' && Boolean(session.admission?.sessionId))
 
 /** Single timer slot: a second transition always cancels the first. */
 let timers: ReturnType<typeof setTimeout>[] = []
@@ -162,7 +166,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   passScanned: false,
   session: null,
   raisedHands: [],
-  audienceIds: [],
   micState: 'off',
   sceneCovered: false,
   screenStream: null,
@@ -227,6 +230,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!loc) return
     const mine = session?.locationId === loc.id ? session : null
 
+    // The Language Center is a screen of its own, whatever was set up elsewhere.
+    if (loc.opens === 'language') {
+      clearTimers()
+      set((s) => ({
+        view: 'language',
+        hoveredId: null,
+        visited: s.visited.includes(loc.id) ? s.visited : [...s.visited, loc.id],
+      }))
+      return
+    }
+
     // A drill needs no building: straight to the practice screen, even where there is no interior.
     if (mine?.format.destination === 'drill') {
       clearTimers()
@@ -242,6 +256,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (mine?.format.destination === 'exam') {
       clearTimers()
       set({ view: 'exam', hoveredId: null })
+      return
+    }
+    // And the debate: a room with the opponent across the table from you.
+    if (mine?.format.destination === 'debate') {
+      clearTimers()
+      set({ view: 'debate', hoveredId: null })
+      return
+    }
+    // And the scholarship interview: a video call with the committee's professor. Nothing to
+    // join until the preparation has made a session.
+    if (mine?.format.destination === 'admission') {
+      if (!mine.admission?.sessionId) return
+      clearTimers()
+      set({ view: 'admission', hoveredId: null })
       return
     }
     if (!loc.hasInterior) return
@@ -349,9 +377,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   raiseRandomHand: () =>
     set((s) => {
       if (s.raisedHands.length >= MAX_HANDS) return {}
-      // In the meeting room the question comes from someone at the table; the
-      // auditorium's audience stays mounted in the same interior and would otherwise answer.
-      const pool: readonly number[] = s.interiorZone === 'meeting' ? MEETING_ATTENDEE_IDS : s.audienceIds
+      // In the meeting room the question comes from someone at the table; anywhere else it
+      // comes from the audience.
+      const pool: readonly number[] =
+        s.interiorZone === 'meeting' ? MEETING_ATTENDEE_IDS : AUDIENCE_ATTENDEE_IDS
       const free = pool.filter((id) => !s.raisedHands.includes(id))
       if (free.length === 0) return {}
       return { raisedHands: [...s.raisedHands, free[Math.floor(Math.random() * free.length)]] }
@@ -360,8 +389,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   lowerOldestHand: () => set((s) => ({ raisedHands: s.raisedHands.slice(1) })),
 
   lowerHands: () => set({ raisedHands: [] }),
-
-  setAudienceIds: (ids) => set({ audienceIds: ids }),
 
   setMicState: (micState) => {
     if (get().micState !== micState) set({ micState })
@@ -396,7 +423,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   closeFeedback: () => {
     if (get().view !== 'feedback') return
     set((s) => ({
-      view: s.selectedId ? 'location' : 'city',
+      // Feedback opened from the Language Center goes back to it.
+      view: !s.selectedId ? 'city' : LOCATIONS_BY_ID.get(s.selectedId)?.opens === 'language' ? 'language' : 'location',
       feedbackSessionId: null,
       poseNonce: s.poseNonce + 1,
     }))
@@ -427,7 +455,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   leaveDrill: () => {
-    // Also closes the park conversation and the oral exam: the other screens with no interior.
+    // Also closes the park conversation, the oral exam and the debate: the other screens
+    // with no interior of their own.
     if (!OWN_SCREEN_VIEWS.includes(get().view)) return
     set((s) => ({ view: 'location', poseNonce: s.poseNonce + 1 }))
   },

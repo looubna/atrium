@@ -51,8 +51,9 @@ COMPRESSION_TARGET_TOKENS = 16_000
 
 
 def end_interview(reason: str) -> dict[str, str]:
-    """End the interview. Call this only after you have closed the conversation
-    politely, or when the candidate clearly asks to stop.
+    """End the interview. Call this only when the scheduled time is nearly over and you
+    have closed the conversation politely, or when the candidate explicitly asks to stop.
+    Never because an answer was rude, off-topic, unclear or in another language.
 
     Args:
         reason: A few words on why the interview is ending.
@@ -61,13 +62,15 @@ def end_interview(reason: str) -> dict[str, str]:
 
 
 def give_floor(colleague: str, words: str, purpose: str = "question") -> dict[str, str]:
-    """Give one panel colleague the floor to ask their question, in their own voice.
+    """Have one panel colleague say something to the candidate, in their own voice.
     Call it as the last thing in your turn, then stay silent.
 
     Args:
         colleague: The colleague's first name, exactly as given in your instructions.
-        words: The question the colleague asks, in their own words (first person).
-        purpose: Always "question".
+        words: Exactly what they say, in their own words, first person, as they would say it.
+        purpose: "question" when they are asking the candidate something — the normal case, and
+            the default. "hello" only for their one introduction at the very start of the
+            interview. Never "hello" twice for the same colleague.
     """
     if purpose == "question":
         return {"status": "speaking", "next": "Your colleague is asking now. Stay silent and listen to the answer."}
@@ -110,7 +113,9 @@ def build_run_config(spec: LiveAgentSpec) -> RunConfig:
         output_audio_transcription=types.AudioTranscriptionConfig(),
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                # LOW let room noise hold a finished answer open for half a minute; the silence
+                # window below is what protects thinking pauses.
+                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
                 silence_duration_ms=spec.silence_duration_ms,
                 prefix_padding_ms=200,
             ),

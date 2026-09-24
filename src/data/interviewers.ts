@@ -3,11 +3,12 @@
  *
  * A real interview loop puts different people in front of you as it goes: a
  * recruiter first, engineers in the middle, the hiring manager and executives
- * at the end. The person should match — seniority is part of the pressure the
+ * at the end. The face should match — seniority is part of the pressure the
  * candidate is practising for.
  *
- * Interviews are voice only: nobody is shown on screen, so a round is a name, a
- * role and the voice that suits them.
+ * The avatar id names the person's recording on our LiveTalking face server
+ * (`data/avatars/<id>`): them seated at their desk, and writing notes while the
+ * candidate answers.
  */
 
 /** Round types come from the backend catalog (`modules/interview/catalogs.py`). */
@@ -27,6 +28,8 @@ export type InterviewRoundType =
 export type Seniority = 'peer' | 'senior' | 'leader' | 'executive'
 
 export interface Interviewer {
+  /** The recording on the face server (`infra/livetalking`). */
+  avatarId: string
   /** Shown on the call tile. */
   name: string
   /** The job they are playing, shown under the name. */
@@ -49,6 +52,7 @@ export interface Interviewer {
 
 export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
   screening: {
+    avatarId: 'mia',
     name: 'Mia Fernández',
     role: 'Talent Partner',
     seniority: 'peer',
@@ -57,6 +61,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Polished and neutral: the first call is friendly, not adversarial.',
   },
   behavioral: {
+    avatarId: 'evelyn',
     name: 'Evelyn Ross',
     role: 'People Business Partner',
     seniority: 'senior',
@@ -65,6 +70,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Experienced and composed — the person who probes how you work with others.',
   },
   technical: {
+    avatarId: 'pablo',
     name: 'Pablo Duarte',
     role: 'Senior Engineer',
     seniority: 'senior',
@@ -73,6 +79,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'A working engineer at a desk: a peer who will check your depth.',
   },
   coding: {
+    avatarId: 'leo',
     name: 'Leo Mensah',
     role: 'Staff Engineer',
     seniority: 'senior',
@@ -81,6 +88,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Approachable while you think aloud, which is what a pairing round needs.',
   },
   system_design: {
+    avatarId: 'gabriel',
     name: 'Gabriel Sartori',
     role: 'Principal Engineer',
     seniority: 'leader',
@@ -89,6 +97,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Visibly the most experienced technologist in the loop — matches a design review.',
   },
   case: {
+    avatarId: 'cara',
     name: 'Cara Lindqvist',
     role: 'Engagement Manager',
     seniority: 'senior',
@@ -97,6 +106,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Consulting-sharp and quick, the register a case interview is run in.',
   },
   hiring_manager: {
+    avatarId: 'richard',
     name: 'Richard Hale',
     role: 'Hiring Manager',
     seniority: 'leader',
@@ -105,6 +115,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Suit, office, older: the person who actually decides.',
   },
   presentation: {
+    avatarId: 'william',
     name: 'William Okonjo',
     role: 'Department Head',
     seniority: 'executive',
@@ -113,6 +124,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'The most senior face available — presenting to an executive should feel different.',
   },
   take_home_review: {
+    avatarId: 'kevin',
     name: 'Kevin Park',
     role: 'Team Manager',
     seniority: 'senior',
@@ -121,6 +133,7 @@ export const INTERVIEWERS: Record<InterviewRoundType, Interviewer> = {
     note: 'Measured and neutral: this round is about walking through your work.',
   },
   other: {
+    avatarId: 'mia',
     name: 'Mia Fernández',
     role: 'Interviewer',
     seniority: 'peer',
@@ -142,6 +155,19 @@ export const MALE_VOICES = ['Charon', 'Iapetus', 'Puck', 'Alnilam', 'Sadaltager'
 export const interviewerFor = (roundType?: string | null): Interviewer =>
   INTERVIEWERS[(roundType ?? 'other') as InterviewRoundType] ?? INTERVIEWERS.other
 
+/**
+ * Who sits in the centre chair of the meeting-room footage, mirroring `IN_PERSON_LEAD`.
+ *
+ * A call can put a different interviewer in front of the candidate every round, because a tile is
+ * whoever we say it is. The room cannot: it is one photograph of three people, and the name under
+ * the frame has to belong to the woman actually sitting there.
+ */
+export const IN_PERSON_LEAD = INTERVIEWERS.behavioral
+
+/** Who leads this round: the room's own interviewer, or the one the round type calls for. */
+export const leadFor = (roundType: string | null | undefined, inPerson: boolean): Interviewer =>
+  inPerson ? IN_PERSON_LEAD : interviewerFor(roundType)
+
 export const SENIORITY_LABEL: Record<Seniority, string> = {
   peer: 'Peer',
   senior: 'Senior',
@@ -149,23 +175,48 @@ export const SENIORITY_LABEL: Record<Seniority, string> = {
   executive: 'Executive',
 }
 
-/** Someone else on a panel call. */
+/** Someone else on a panel, beside the lead interviewer. */
 export interface PanelColleague {
   name: string
   role: string
-  /** Asks their own questions, in this Gemini voice (never a lead interviewer's). Null: never speaks. */
+  /** Speaks in this Gemini voice, which no lead interviewer uses. Null: never speaks at all. */
   voice: string | null
+  /**
+   * How many questions they ask in the whole interview, when that has been decided for them.
+   *
+   * Left out, nobody has decided: the lead shares the questioning out itself, which is how a
+   * panel on a call has always run. Zero is the person who sits in — they say hello at the start
+   * and then listen and take notes. The server holds the lead to this (`PanelMember.questions`);
+   * it is here so a room knows who is only ever going to be a name.
+   */
+  questions?: number
   /** Camera on: their face shows, framed from the meeting footage. */
   onCamera: boolean
+  /** Their own recording on the face server (`PANEL_AVATARS`). Absent for someone with no face. */
+  avatarId?: string
 }
 
 /**
- * The rest of a panel, beside the lead interviewer. Mirrors `PANEL_COLLEAGUES` and
- * `PANEL_OBSERVER` in `backend/app/modules/interview/interviewers.py`, which the
- * live interviewer is told about — the names it says are the names on these tiles.
+ * The rest of a panel on a video call. Mirrors `PANEL_ONLINE` in
+ * `backend/app/modules/interview/interviewers.py`, which the live interviewer is told about —
+ * the names it says are the names on these tiles.
+ *
+ * Two colleagues on camera share the questioning with the lead, and nobody else is on the call.
  */
 export const PANEL: PanelColleague[] = [
-  { name: 'Daniel Brooks', role: 'Team Lead', voice: 'Orus', onCamera: true },
+  { name: 'Daniel Brooks', role: 'Team Lead', voice: 'Orus', onCamera: true, avatarId: 'william' },
   { name: 'Grace Lin', role: 'Senior Team Member', voice: 'Kore', onCamera: true },
-  { name: 'Sam Wright', role: 'Recruiting Coordinator', voice: null, onCamera: false },
+]
+
+/**
+ * The rest of a panel in the meeting room, mirroring `PANEL_IN_PERSON`.
+ *
+ * A call is a grid of tiles and can seat anyone; the room is one photograph, so the only people
+ * who may speak are the three sitting in it. They are not equals either: the lead runs the
+ * interview, Daniel comes in once or twice, and Grace introduces herself and then takes notes.
+ * The room is one shot of the three of them; whoever speaks has their mouth lip-synced in it.
+ */
+export const PANEL_IN_PERSON: PanelColleague[] = [
+  { name: 'Daniel Brooks', role: 'Team Lead', voice: 'Orus', questions: 2, onCamera: false },
+  { name: 'Grace Lin', role: 'Senior Team Member', voice: 'Kore', questions: 0, onCamera: false },
 ]

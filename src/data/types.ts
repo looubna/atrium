@@ -25,6 +25,7 @@ export type PlaceIcon =
   | 'tree'
   | 'coffee'
   | 'shopping'
+  | 'language'
   | 'target'
   | 'bus'
 
@@ -74,4 +75,6 @@ export interface Location {
   hasInterior?: boolean
   /** Photo-only interiors skip the front doors and open straight into this room. */
   arrival?: 'meeting' | 'theater'
+  /** A screen of its own, opened from the panel instead of practice areas (the Language Center). */
+  opens?: 'language'
 }

@@ -37,7 +37,7 @@ from app.platform.media.assemble import Playback, assemble_candidate, assemble_i
 from app.platform.media.ffmpeg import mix_to_m4a, pcm_to_flac_chunks
 from app.platform.media.prosody import VoiceMetrics, measure_voice
 from app.platform.media.tracks import SAMPLE_RATES
-from app.platform.media.visual import VisualMetrics, measure_visual, parse_face_seconds
+from app.platform.media.visual import VisualMetrics, honest_visual_scores, measure_visual, parse_face_seconds
 from app.platform.sessions import ProcessingStatus
 from app.platform.storage.objects import processing, user_content
 from app.platform.storage.paths import StoragePaths, Track, processing_prefix
@@ -336,6 +336,8 @@ async def step_evaluate(job: dict[str, Any]) -> None:
         uid=uid, run_id=run_id, session=session, transcript=transcript, metrics=metrics,
         code_snapshots=code, prior_scores=prior, voice=voice, audio=audio, visual=visual, video=video,
     )
+    # Held to what the camera actually showed, whichever module wrote the report.
+    evaluation.scores = honest_visual_scores(evaluation.scores, visual)
     await store.write(
         StoragePaths(uid).evaluation(sid, run_id), evaluation.model_dump_json().encode(), "application/json"
     )

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -34,6 +34,19 @@ class CloseCode(IntEnum):
     CONFLICT = 4409
     QUOTA = 4429
     UNAVAILABLE = 4503
+
+
+class ForbiddenReason(StrEnum):
+    """Why a 4403 closed the socket, sent as the close reason.
+
+    The client shows a different message for each, so these strings are wire format: the web app
+    matches them in `src/platform/live/protocol.ts`. Changing one changes what the candidate reads.
+    """
+
+    EMAIL_UNVERIFIED = "email not verified"
+    CONSENT_REQUIRED = "consent_required"
+    ACCOUNT_DELETING = "account_deleting"
+    ORIGIN = "origin not allowed"
 
 
 class ProtocolError(ValueError):
@@ -70,6 +83,9 @@ class AuthMessage(_Msg):
     idToken: Annotated[str, Field(min_length=1, max_length=4096)]
     appCheckToken: Annotated[str | None, Field(max_length=4096)] = None
     lastAckSeq: Annotated[int | None, Field(ge=0)] = None
+    #: Connect now, but the interviewer only opens once `begin` arrives (the candidate has sat
+    #: down). Connecting during the walk to the room takes the connection off the wait.
+    holdOpening: bool = False
 
 
 class PlaybackStarted(_Msg):
@@ -103,12 +119,24 @@ class ClientEnd(_Msg):
     type: Literal["end"]
 
 
+class Begin(_Msg):
+    """The candidate is in place: the interviewer may open (after `holdOpening`)."""
+
+    type: Literal["begin"]
+
+
+class Release(_Msg):
+    """The user hands the floor over (takes questions): only for a session that holds it."""
+
+    type: Literal["release"]
+
+
 class Ping(_Msg):
     type: Literal["ping"]
     mediaMs: Annotated[int, Field(ge=0)]
 
 
-Control = PlaybackStarted | PlaybackStopped | CodeSnapshot | BoardImage | ClientEnd | Ping
+Control = PlaybackStarted | PlaybackStopped | CodeSnapshot | BoardImage | Begin | ClientEnd | Release | Ping
 _control: TypeAdapter[Control] = TypeAdapter(Annotated[Control, Field(discriminator="type")])
 _auth: TypeAdapter[AuthMessage] = TypeAdapter(AuthMessage)
 

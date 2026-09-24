@@ -34,15 +34,13 @@ def test_every_round_type_has_an_interviewer_and_a_voice() -> None:
     assert set(VOICES) == set(RoundType)
     assert set(INTERVIEWERS) == set(RoundType)
     for round_type, person in INTERVIEWERS.items():
+        assert person.avatar_id.replace("_", "").isalnum(), round_type
         assert person.name and person.role, round_type
-        assert person.voice, round_type
 
 
-def test_a_loop_meets_a_different_person_at_each_stage() -> None:
+def test_a_loop_shows_a_different_face_at_each_stage() -> None:
     loop = [RoundType.SCREENING, RoundType.TECHNICAL, RoundType.SYSTEM_DESIGN, RoundType.HIRING_MANAGER]
-    assert len({INTERVIEWERS[r].name for r in loop}) == len(loop)
-    # Voice is all the candidate has to tell them apart, so it must differ too.
-    assert len({INTERVIEWERS[r].voice for r in loop}) == len(loop)
+    assert len({INTERVIEWERS[r].avatar_id for r in loop}) == len(loop)
 
 
 def test_interviewer_lookup_accepts_stored_strings_and_unknown_values() -> None:

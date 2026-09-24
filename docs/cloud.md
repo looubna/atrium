@@ -87,6 +87,27 @@ cut into exact 15-minute FLAC chunks. `enable_word_confidence` is not supported 
 recognizer and is not requested. Batch recognition of even short audio can take several
 minutes; the pipeline polls every 20 seconds for up to about an hour.
 
+## The interviewer's face (optional)
+
+The interviewer is a person recorded seated at a desk, lip-synced live by our own LiveTalking
+server from the interviewer's own speech, and writing notes while the candidate answers. Setting
+it up, and recording the interviewers, is `infra/livetalking/README.md`.
+
+Two settings connect the API to it: `LIVETALKING_URL` in `app_config`, and the Terraform variable
+`livetalking_secret`, which creates the `livetalking-secret` secret and injects
+`LIVETALKING_SECRET` into the API service only. The face server gets that same value as
+`ATRIUM_SECRET`. Leave either empty and interviews run on audio alone with the plain interviewer
+tile.
+
+The browser never receives the secret: it calls `POST /interview/sessions/{id}/avatar-session`,
+and the server returns a 15-minute token naming the recording for that round, which the face
+server verifies. Panel interviews return one token per speaking colleague, so each has their own
+face; `LIVETALKING_AVATAR` overrides every face with a single recording, for testing.
+
+Cost is the GPU, not a per-minute fee: one Cloud Run instance with an L4 GPU (about $0.70/hour
+while running, scaling to zero) renders several faces at once, since only the person speaking
+needs inference. Watch concurrency rather than minutes as usage grows.
+
 ## Cost controls
 
 - Budget alerts at 50/90/100 %; at 100 % the worker sets `config/runtime.aiEnabled=false`
@@ -105,3 +126,35 @@ minutes; the pipeline polls every 20 seconds for up to about an hour.
   configured Live model (`LIVE_INPUT_MICROS_PER_M`, `LIVE_OUTPUT_MICROS_PER_M`); until
   then live cost is tracked as minutes and tokens only. Google Search grounding is
   billed per query and not included.
+
+## Rebuilding an interviewer's face at a higher resolution
+
+How sharp a lip-synced face looks is set by how many pixels its **face box** has, and that comes
+from the source clip. Prof. William's avatar was built from a 1280x720 clip, which gave a 324x324
+box: MuseTalk repaints that box and scales it back into the frame, so the mouth is the softest
+thing on screen. A 1080p source roughly doubles the box, which is the only change that adds detail
+rather than sharpening what is already there (`ATRIUM_SHARPEN`) or spending bits on it
+(`ATRIUM_VIDEO_KBPS`).
+
+The recipe, with the face server running (`infra/livetalking/`):
+
+1. **Film the canvas** at 1080p from the person's still, 8 s, **mouth shut the whole time** —
+   lip-sync repaints the mouth, so an open one shows through as silent mouthing in every pause.
+   Check it densely (`select='not(mod(n,6))'`, tiled) before going further.
+2. **25 fps** (`-vf fps=25`), because that is what the server renders; upload to `/opt/inputs/`.
+3. **Prep it** with MuseTalk's own script, copying the existing config for that face so the
+   `bbox_shift` stays the same (William's is 5):
+
+   ```sh
+   sudo /opt/mt/bin/python -m scripts.realtime_inference \
+     --inference_config configs/inference/atrium_<face>_hd.yaml --version v15 --result_dir results
+   ```
+
+4. **Copy it into LiveTalking** (`full_imgs`, `mask`, `coords.pkl`, `mask_coords.pkl`, `latents.pt`,
+   `avator_info.json`) and rebuild `states/listening` from the notes clip at 25 fps.
+5. **Build under a new id, then swap**, keeping the old directory: the app names the face in
+   `LIVETALKING_FACES`, so swapping the directory contents needs no env change and no backend
+   restart.
+
+Raising the resolution costs frames per second, and frames per second is what keeps a live face in
+sync — see `scratch/musetalk-test/results/` for the measurement on an L4.

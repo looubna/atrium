@@ -111,6 +111,75 @@ class AnswerListener:
         return self.outcome != "listening"
 
 
+#: The model's own end-of-turn detection can miss a quiet stop and leave the candidate waiting.
+#: After this much silence following a real answer, it is told the candidate has finished.
+#: Silence after an answer before *telling* the model the candidate is done. This is a backstop for
+#: an end of turn the model missed, nothing more, so it must clear the model's whole normal path:
+#: its own `silence_duration_ms`, plus however long it then takes to produce a first audio frame.
+#: Only that frame closes the window (it sets `in_interviewer_turn`), so a margin of a few hundred
+#: milliseconds is not a margin at all — the note lands while the model is already composing a
+#: reply, and it answers the question it was asked and then the one the note told it to ask. That
+#: is the lead asking twice without listening. Late and never is the right trade here: the cost of
+#: firing early is an interrupted candidate, the cost of firing late is a pause in a rare failure.
+TURN_END_SILENCE_MS = 5_000
+#: Silence after the lead's own question before checking in on a candidate who has not started
+#: answering at all. Long enough to be a thinking pause rather than a gap between words, short
+#: enough that nobody sits wondering whether the app heard them.
+SILENT_PROMPT_MS = 3_000
+#: Silence before handing a panel turn to the colleagues.
+#:
+#: Being ours to make rather than the model's is why this *may* be short; it is not a reason for it
+#: to be. Handing over cuts to another speaker and cannot be taken back, so it has to be the most
+#: patient judgement of "they have finished" in the session, not the least: at 1.2 s it fired on the
+#: breath in the middle of an answer and the lead said "thank you, over to you" across a candidate
+#: who was still talking. It must therefore stay at least as long as the model's own
+#: `silence_duration_ms` (live.py) — a pause the model would still be listening through is not one
+#: we may end an answer on.
+PANEL_HANDOVER_SILENCE_MS = 2_600
+#: How much the candidate must actually have said for either to count as a finished answer. A
+#: hesitant "um, right..." is not an answer, and treating it as one is what made the interviewer
+#: ask its next question over a candidate who was still gathering their thoughts.
+TURN_END_MIN_SPEECH_MS = 2_000
+
+
+@dataclass
+class TurnEndWatch:
+    """Notices the candidate has finished an answer the interviewer hasn't replied to yet."""
+
+    speech_ms: int = 0
+    last_speech_ms: int | None = None
+    fired: bool = False
+
+    def reset(self) -> None:
+        """The interviewer has started speaking: a new answer starts after it."""
+        self.speech_ms, self.last_speech_ms, self.fired = 0, None, False
+
+    def settle(self) -> None:
+        """The interviewer is answering after all: this answer needs no note.
+
+        Cheaper than waiting out the silence window — the moment the model produces anything at
+        all for this turn we know it noticed, so the backstop can stand down without relying on
+        the timing margin alone.
+        """
+        self.fired = True
+
+    def feed(
+        self, capture_ms: int, pcm: bytes, frame_ms: int = 100, silence_ms: int = TURN_END_SILENCE_MS
+    ) -> bool:
+        """True exactly once per answer, when it has been followed by `silence_ms` of quiet."""
+        end_ms = capture_ms + frame_ms
+        if frame_rms(pcm) >= SPEECH_RMS:
+            self.speech_ms += frame_ms
+            self.last_speech_ms = end_ms
+            return False
+        if self.fired or self.speech_ms < TURN_END_MIN_SPEECH_MS or self.last_speech_ms is None:
+            return False
+        if end_ms - self.last_speech_ms < silence_ms:
+            return False
+        self.fired = True
+        return True
+
+
 class PanelLineDraft(BaseModel):
     handover: str = Field(
         description="What the lead interviewer says now: at most 12 words — a brief, specific thank-you for the "
@@ -148,6 +217,18 @@ def panel_content(brief: str, lead: str, member: PanelMember, dialog: list[Line]
     ])
 
 
+def local_handover(member: PanelMember) -> str:
+    """The lead's line giving a colleague the floor, written here rather than by the model.
+
+    It carries no information the model is needed for — `write_panel_line` already appends this
+    exact form whenever the draft forgets the name — and writing it here takes the text call off
+    the critical path: the hand-over can be voiced and playing while the model is still choosing
+    the colleague's question. That silence, between the candidate's answer and anyone speaking,
+    was the whole delay before a colleague came in.
+    """
+    return f"Thank you. {member.first_name}, over to you."
+
+
 def fake_line(member: PanelMember, asked: list[str]) -> PanelLineDraft:
     return PanelLineDraft(
         handover=f"Thank you. {member.first_name}, over to you.",
@@ -170,6 +251,31 @@ async def write_panel_line(
     if member.first_name.lower() not in handover.lower():
         handover = f"{handover} {member.first_name}, over to you.".strip()
     return PanelLineDraft(handover=handover, question=question)
+
+
+#: How somebody starts when they are introducing themselves rather than asking something.
+GREETING_OPENERS = (
+    "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+    "nice to meet", "great to meet", "lovely to meet", "pleased to meet", "good to meet",
+)
+
+
+def is_greeting(text: str, first_name: str) -> bool:
+    """Whether this line is somebody saying hello rather than putting a question.
+
+    A colleague introduces themselves once. The lead cannot hear them do it — we speak their
+    words — so it sometimes asks for the introduction a second time, and hearing the same person
+    say "Hi, I'm Daniel" twice in one interview is the kind of mistake nobody forgives. Dropping
+    by the lead's own label alone is not enough either: it mislabels real questions as hellos, and
+    a question in the bin is worse than a repetition. So the words themselves are read.
+    """
+    clean = normalize(text)
+    if "?" in text:
+        return False
+    if any(clean == opener or clean.startswith(f"{opener} ") for opener in GREETING_OPENERS):
+        return True
+    me = first_name.lower()
+    return "my name is" in clean or any(f"{i} {me}" in clean for i in ("i'm", "i am", "im"))
 
 
 def questions_in(text: str) -> list[str]:

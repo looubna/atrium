@@ -105,6 +105,17 @@
       0 20px 50px -12px rgb(0 0 0 / 0.7),
       0 2px 8px -2px rgb(0 0 0 / 0.5);
   }
+  /* On a phone the panels sit over the busy city and cover much of it: more solid, so small text
+     stays readable over bright buildings and sky. */
+  @media (max-width: 640px) {
+    .glass {
+      background: linear-gradient(
+        165deg,
+        color-mix(in oklab, var(--color-ink-700) 93%, transparent),
+        color-mix(in oklab, var(--color-ink-900) 96%, transparent)
+      );
+    }
+  }
 
   /* Hairline label styling used across the HUD. */
   .eyebrow {
@@ -154,6 +165,19 @@
   /* A light sweeping over the visitor pass while it waits to be scanned. */
   .anim-scan {
     animation: scan 2s var(--ease-in-out-quart) infinite;
+  }
+  /* The brand mark thinking: the core breathes, and blooms once at 100%. */
+  .anim-think-core {
+    transform-origin: 50% 50%;
+    animation: think-breathe 2.6s var(--ease-in-out-quart) infinite;
+  }
+  .anim-think-bloom {
+    animation: think-bloom 0.62s var(--ease-out-expo) both;
+  }
+  /* The mark turning through a long wait (the face server starting). */
+  .anim-think-turn {
+    transform-origin: 50% 50%;
+    animation: think-turn 5s linear infinite;
   }
 }
 
@@ -231,12 +255,44 @@
   }
 }
 
+@keyframes think-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.09);
+  }
+}
+@keyframes think-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes think-bloom {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .anim-grow-x,
   .anim-tick,
   .anim-glow,
   .anim-rise,
-  .anim-fade {
+  .anim-fade,
+  .anim-think-core,
+  .anim-think-bloom,
+  .anim-think-turn {
     animation: none;
   }
 }

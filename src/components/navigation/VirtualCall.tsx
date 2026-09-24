@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PANEL, interviewerFor } from '@/data/interviewers'
 import { MEETING_MEDIA_BASE } from '@/data/meeting'
 import { describeSession } from '@/data/practice'
@@ -8,6 +8,9 @@ import { cn } from '@/lib/utils'
 import { useScreenShare } from '@/lib/useScreenShare'
 import { CodePane } from '@/modules/interview/live/CodePane'
 import { useInterviewRoom } from '@/modules/interview/live/useInterviewRoom'
+import type { AvatarRenderer } from '@/platform/avatar/types'
+import { AvatarTile } from './AvatarTile'
+import { FramingHint } from './FramingHint'
 import { useAppStore } from '@/state/useAppStore'
 import { LiveOverlay, LiveStrip } from './LivePanels'
 import { SlideControls } from './SlideControls'
@@ -259,6 +262,56 @@ function ColleagueTile({ person, compact, speaking }: { person: Colleague; compa
   )
 }
 
+/** A panel colleague's own live face; tells the call when it is on screen or has failed. */
+function ColleagueFace({
+  person,
+  renderer,
+  speaking,
+  compact,
+  onLive,
+  onFailed,
+  onEnded,
+}: {
+  person: Colleague
+  renderer: AvatarRenderer
+  speaking: boolean
+  compact?: boolean
+  onLive: (name: string, renderer: AvatarRenderer) => void
+  onFailed: (name: string) => void
+  onEnded: () => void
+}) {
+  const live = useCallback((r: AvatarRenderer) => onLive(person.name, r), [onLive, person.name])
+  const failed = useCallback(() => onFailed(person.name), [onFailed, person.name])
+  return (
+    <AvatarTile
+      renderer={renderer}
+      name={person.name}
+      role={person.role}
+      speaking={speaking}
+      compact={compact}
+      onLive={live}
+      onFailed={failed}
+      onEnded={onEnded}
+    />
+  )
+}
+
+/** Like a video call before the other side joins: an empty tile and a quiet status. */
+function WaitingTile({ message, compact }: { message: string; compact?: boolean }) {
+  return (
+    <TileFrame>
+      <div className="flex flex-col items-center gap-3 px-3 text-center">
+        <div className="flex gap-1.5" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="size-1.5 animate-pulse rounded-full bg-mist" style={{ animationDelay: `${i * 200}ms` }} />
+          ))}
+        </div>
+        {!compact && <div className="text-[12.5px] text-mist">{message}</div>}
+      </div>
+    </TileFrame>
+  )
+}
+
 /** A title slide with a small chart — what the user is presenting. */
 function SharedSlide({ slide }: { slide?: string }) {
   if (slide) {
@@ -364,7 +417,23 @@ export function VirtualCall() {
   const liveSessionId = inCall ? (mine?.interview?.sessionId ?? null) : null
   const isLive = Boolean(liveSessionId)
   const camera = useCamera(inCall && cameraOn)
-  const { live, liveActive, videoUpload } = useInterviewRoom({ sessionId: liveSessionId, camera: camera.stream })
+  const {
+    live,
+    liveActive,
+    avatar,
+    avatarFailed,
+    avatarUnavailable,
+    setFaceOnScreen,
+    onAvatarFailed,
+    onFaceEnded,
+    colleagueLive,
+    colleagueFailed,
+    colleagueFace,
+    colleagueJoining: joiningByName,
+    videoUpload,
+    framing,
+  } = useInterviewRoom({ sessionId: liveSessionId, camera: camera.stream })
+  const colleagueJoining = (p: Colleague) => joiningByName(p.name)
   // Coding and system-design rounds get the shared editor, open by default.
   const coding = isLive && liveActive && live.state.coding
   const [codeOpen, setCodeOpen] = useState(true)
@@ -414,6 +483,31 @@ export function VirtualCall() {
   const railTile = (p: Colleague, i: number) =>
     !isLive ? (
       <ColleagueTile key={p.name} person={p} compact />
+    ) : i === 0 && avatar && !avatarFailed ? (
+      <AvatarTile
+        key={p.name}
+        renderer={avatar.renderer}
+        name={avatar.name}
+        role={avatar.role}
+        speaking={leadSpeaking}
+        compact
+        onLive={setFaceOnScreen}
+        onFailed={onAvatarFailed}
+        onEnded={onFaceEnded}
+      />
+    ) : i > 0 && colleagueFace(p.name) ? (
+      <ColleagueFace
+        key={p.name}
+        person={p}
+        renderer={colleagueFace(p.name)!}
+        speaking={live.state.panelSpeaker === p.name}
+        compact
+        onLive={colleagueLive}
+        onFailed={colleagueFailed}
+        onEnded={onFaceEnded}
+      />
+    ) : i > 0 && colleagueJoining(p) ? (
+      <WaitingTile key={p.name} message="" compact />
     ) : (
       <InitialsTile
         key={p.name}
@@ -511,7 +605,23 @@ export function VirtualCall() {
               // A live interview shows no stand-in footage: the interviewer joins like on a
               // real call, and the rest of a panel keeps their cameras off.
               if (i > 0) {
-                return (
+                const face = colleagueFace(p.name)
+                if (face) {
+                  return (
+                    <ColleagueFace
+                      key={p.name}
+                      person={p}
+                      renderer={face}
+                      speaking={live.state.panelSpeaker === p.name}
+                      onLive={colleagueLive}
+                      onFailed={colleagueFailed}
+                      onEnded={onFaceEnded}
+                    />
+                  )
+                }
+                return colleagueJoining(p) ? (
+                  <WaitingTile key={p.name} message={liveActive ? `Waiting for ${p.name} to join…` : ''} />
+                ) : (
                   <InitialsTile
                     key={p.name}
                     label={p.name}
@@ -522,13 +632,35 @@ export function VirtualCall() {
                   />
                 )
               }
+              if (avatar && !avatarFailed) {
+                return (
+                  <AvatarTile
+                    key={p.name}
+                    renderer={avatar.renderer}
+                    name={avatar.name}
+                    role={avatar.role}
+                    speaking={leadSpeaking}
+                    onLive={setFaceOnScreen}
+                    onFailed={onAvatarFailed}
+                    onEnded={onFaceEnded}
+                  />
+                )
+              }
+              if (avatarFailed || avatarUnavailable) {
+                return (
+                  <InitialsTile
+                    key={p.name}
+                    label={interviewerFor(mine?.interview?.roundType).name}
+                    role={interviewerFor(mine?.interview?.roundType).role}
+                    color={p.color}
+                    speaking={leadSpeaking}
+                  />
+                )
+              }
               return (
-                <InitialsTile
+                <WaitingTile
                   key={p.name}
-                  label={interviewerFor(mine?.interview?.roundType).name}
-                  role={interviewerFor(mine?.interview?.roundType).role}
-                  color={p.color}
-                  speaking={leadSpeaking}
+                  message={liveActive ? 'Waiting for the interviewer to join…' : 'Your interviewer joins when you start.'}
                 />
               )
             })}
@@ -587,6 +719,8 @@ export function VirtualCall() {
           <IconPhoneOff width={wideShare ? 17 : 20} height={wideShare ? 17 : 20} />
         </Control>
       </div>
+
+      <FramingHint framing={framing} />
 
       {isLive && liveSessionId && (
         <LiveOverlay

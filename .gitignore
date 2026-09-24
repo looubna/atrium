@@ -45,3 +45,6 @@ ios/App/build/
 ios/App/Pods/
 ios/DerivedData/
 xcuserdata/
+
+# Claude Code local settings (may carry cloud permissions)
+.claude/settings.local.json

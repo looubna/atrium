@@ -20,7 +20,7 @@ from google.api_core.client_options import ClientOptions
 from google.cloud.speech_v2 import SpeechAsyncClient
 from google.cloud.speech_v2.types import cloud_speech as cs
 
-from app.core.settings import AiProvider, get_settings
+from app.core.settings import AiProvider, Env, get_settings
 from app.platform.storage.objects import processing
 from app.platform.transcripts.model import Word
 
@@ -160,9 +160,41 @@ class FakeSpeechToText:
         return out
 
 
+class InlineChirpSpeechToText:
+    """Real Chirp 3 for local development with `AI_PROVIDER=vertex`.
+
+    Locally the chunks live in `LocalObjectStore` on this machine, where batch recognition
+    (which only reads Cloud Storage) cannot reach them. So each chunk is decoded here and
+    recognised inline, in pieces under the synchronous limit, when its words are asked for.
+    """
+
+    SAMPLE_RATE = 16_000
+
+    async def start(self, chunks: list[AudioChunk], output_prefix: str, language: str) -> list[str]:
+        return ["inline"]
+
+    async def results(self, operations: list[str]) -> dict[str, str] | None:
+        return {}
+
+    async def words(self, chunks: list[AudioChunk], result_names: dict[str, str]) -> list[Word]:
+        from app.platform.media.ffmpeg import decode_to_pcm16
+
+        store = processing()
+        out: list[Word] = []
+        for chunk in chunks:
+            pcm = await decode_to_pcm16(await store.read(chunk.name), self.SAMPLE_RATE)
+            for word in await transcribe_short(pcm, sample_rate=self.SAMPLE_RATE):
+                shift = {"start_ms": chunk.offset_ms + word.start_ms, "end_ms": chunk.offset_ms + word.end_ms}
+                out.append(word.model_copy(update=shift))
+        return out
+
+
 def speech_to_text(candidate_turns: list[CandidateTurn]) -> SpeechToText:
-    if get_settings().ai_provider is AiProvider.FAKE:
+    settings = get_settings()
+    if settings.ai_provider is AiProvider.FAKE:
         return FakeSpeechToText(candidate_turns)
+    if settings.app_env is Env.LOCAL:
+        return InlineChirpSpeechToText()
     return ChirpSpeechToText()
 
 

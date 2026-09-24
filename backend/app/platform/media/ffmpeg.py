@@ -42,6 +42,37 @@ async def run_ffmpeg(args: list[str], *, timeout_s: float = 900) -> None:
         raise FfmpegError(f"ffmpeg failed ({process.returncode}): {stderr.decode(errors='replace')[-500:]}")
 
 
+async def decode_to_pcm16(data: bytes, sample_rate: int, *, timeout_s: float = 300) -> bytes:
+    """Any audio ffmpeg reads (a FLAC chunk, say) as raw PCM16 mono at `sample_rate`."""
+    process = await asyncio.create_subprocess_exec(
+        FFMPEG,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-f",
+        "s16le",
+        "-ar",
+        str(sample_rate),
+        "-ac",
+        "1",
+        "pipe:1",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        pcm, stderr = await asyncio.wait_for(process.communicate(data), timeout=timeout_s)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        raise FfmpegError("ffmpeg timed out") from None
+    if process.returncode != 0:
+        raise FfmpegError(f"ffmpeg failed ({process.returncode}): {stderr.decode(errors='replace')[-500:]}")
+    return pcm
+
+
 @dataclass(frozen=True)
 class FlacChunk:
     path: Path

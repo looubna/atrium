@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from app.modules.interview.interviewers import PANEL_COLLEAGUES
+from app.modules.interview.interviewers import PANEL_IN_PERSON
 from app.platform.agents import panel
+from app.platform.agents.live import PanelMember
 from app.platform.agents.panel import (
     AnswerListener,
     Exchange,
@@ -15,7 +16,11 @@ from app.platform.agents.panel import (
     write_panel_line,
 )
 
-DANIEL, GRACE = PANEL_COLLEAGUES
+(MARCUS,) = PANEL_IN_PERSON.askers
+# A second speaker, so the panel machinery is still exercised with more than one colleague.
+# It supports any number; the interview itself seats one who asks and one who only takes notes.
+SECOND = PanelMember("Nadia Okafor", "Product Lead", "Aoede",
+                     "Hi, I'm Nadia.", "how the candidate works with product")
 
 
 def tone(amplitude: int) -> bytes:
@@ -72,29 +77,29 @@ def test_frames_before_the_question_ended_are_held_then_ignored() -> None:
 
 
 def test_the_writer_is_told_the_job_and_the_colleague_focus() -> None:
-    content = panel.panel_content("Case interview: X, for Nurse at Clinic.", "Evelyn Ross", GRACE, [], [])
-    assert "for Nurse at Clinic" in content and GRACE.focus in content
+    content = panel.panel_content("Case interview: X, for Nurse at Clinic.", "Evelyn Ross", SECOND, [], [])
+    assert "for Nurse at Clinic" in content and SECOND.focus in content
     assert "never assume a field" in panel.panel_instruction()
 
 
 async def test_panel_lines_are_new_and_hand_over_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    line = await write_panel_line("alice", "Behavioral interview", "Evelyn Ross", DANIEL, [], [])
-    assert DANIEL.first_name in line.handover and line.question
+    line = await write_panel_line("alice", "Behavioral interview", "Evelyn Ross", MARCUS, [], [])
+    assert MARCUS.first_name in line.handover and line.question
 
     async def repeat(**_: object) -> panel.PanelLineDraft:
         return panel.PanelLineDraft(handover="Thanks.", question="What would you change?")
 
     monkeypatch.setattr(panel.gateway, "generate", repeat)
-    fixed = await write_panel_line("alice", "b", "Evelyn Ross", GRACE, [], [])
-    assert fixed.handover == "Thanks. Grace, over to you."
+    fixed = await write_panel_line("alice", "b", "Evelyn Ross", SECOND, [], [])
+    assert fixed.handover == "Thanks. Nadia, over to you."
     with pytest.raises(ValueError):
-        await write_panel_line("alice", "b", "Evelyn Ross", GRACE, [], ["what would you change"])
+        await write_panel_line("alice", "b", "Evelyn Ross", SECOND, [], ["what would you change"])
 
 
 def test_catch_up_note_tells_the_lead_everything_it_missed() -> None:
     note = catch_up_note("Evelyn", [
-        Exchange(DANIEL, "How did you test it?", "With a pilot group."),
-        Exchange(GRACE, "How did users react?", ""),
+        Exchange(MARCUS, "How did you test it?", "With a pilot group."),
+        Exchange(SECOND, "How did users react?", ""),
     ])
     assert 'Daniel asked: "How did you test it?" The candidate answered: "With a pilot group."' in note
     assert "(the candidate did not answer)" in note
@@ -105,6 +110,19 @@ def test_the_lead_is_reminded_of_its_own_questions() -> None:
     said = "Thanks for that. So, could you tell me about a time you led without authority? Take your time."
     assert questions_in(said) == ["So, could you tell me about a time you led without authority?"]
     assert questions_in("Right? Great.") == []
-    note = catch_up_note("Evelyn", [Exchange(DANIEL, "How did you test it?", "A pilot.")], questions_in(said))
+    note = catch_up_note("Evelyn", [Exchange(MARCUS, "How did you test it?", "A pilot.")], questions_in(said))
     assert 'never ask these again): "So, could you tell me about a time you led without authority?"' in note
-    assert "already asked" not in catch_up_note("Evelyn", [Exchange(DANIEL, "Q?", "A.")])
+    assert "already asked" not in catch_up_note("Evelyn", [Exchange(MARCUS, "Q?", "A.")])
+
+
+def test_a_greeting_is_recognised_by_its_words() -> None:
+    """The lead's label is not enough: it calls real questions hellos and hellos questions."""
+    assert panel.is_greeting("Hi, I'm Marcus, I lead the team you'd be joining.", "Marcus")
+    assert panel.is_greeting("Hello, nice to meet you.", "Marcus")
+    assert panel.is_greeting("Good morning.", "Marcus")
+    assert panel.is_greeting("My name is Marcus and I'm on the team.", "Marcus")
+    assert panel.is_greeting("I'm Marcus, one of the team leads here.", "Marcus")
+    # Anything the candidate has to answer is a question, whatever it opens with.
+    assert not panel.is_greeting("Hi — could you walk me through that migration?", "Marcus")
+    assert not panel.is_greeting("What would you do differently next time?", "Marcus")
+    assert not panel.is_greeting("Tell me about a project you owned.", "Marcus")

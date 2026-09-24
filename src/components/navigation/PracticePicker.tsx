@@ -4,19 +4,20 @@ import {
   DURATION_MAX,
   DURATION_MIN,
   DURATION_STEP,
-  GATHERING_FORMATS,
   MEETING_ROLES,
   NETWORKING_TAGS,
   EMOTIONAL_SCENARIOS,
   NEGOTIATION_SCENARIOS,
+  LEADERSHIP_DOMAINS,
   LEADERSHIP_SCENARIOS,
   SALES_TYPES,
   PRACTICE_FORMATS,
   describeSession,
+  presentationFormatOf,
+  showsLiveFace,
   type AttachedFile,
   type InterviewMode,
   type InterviewPanel,
-  type GatheringFormat,
   type MeetingRole,
   type NetworkingTag,
   type EmotionalPartner,
@@ -41,16 +42,26 @@ import {
   type BlueprintRound,
   type ResumeItem,
 } from '@/modules/interview/api'
+import { AdmissionSetupForm } from '@/modules/admission/setup/AdmissionSetup'
+import { DebateSetupForm } from '@/modules/debate/setup/DebateSetup'
 import { ExamSetupForm } from '@/modules/exam/setup/ExamSetup'
 import { JourneyReview } from '@/modules/interview/journey/JourneyReview'
 import { roundMinutes } from '@/modules/interview/journey/rounds'
 import { ApiError } from '@/platform/api/client'
+import { createLeadershipSession } from '@/modules/leadership/api'
+import { createMeetingSession, MAX_MATERIAL_BYTES } from '@/modules/meeting/api'
+import { createNegotiationSession } from '@/modules/negotiation/api'
+import { createPresentationSession } from '@/modules/presentation/api'
+import { DECK_ACCEPT, DeckError, loadDeck } from '@/lib/loadDeck'
+import { createSalesSession } from '@/modules/sales/api'
+import { holdFaces } from '@/platform/avatar/faceWarmup'
 import { firebase, firebaseConfigured, NotSignedIn } from '@/platform/firebase'
 import { useLiveCollection } from '@/platform/firestore/live'
 import { usePracticeProgress } from '@/modules/practice/api'
 import { useAppStore, type JourneyRequest } from '@/state/useAppStore'
 import { PracticeHeader } from '../practice/PracticeHeader'
 import { Button } from '../ui/Button'
+import { ThinkingLogo } from '../ui/ThinkingLogo'
 import { DeckPicker } from './SlideControls'
 import {
   IconArrowLeft,
@@ -187,7 +198,8 @@ function FilePick({
 }: {
   label: string
   file?: AttachedFile
-  onChange: (file?: AttachedFile) => void
+  /** The file's details, and the file itself for a form that reads it. */
+  onChange: (file?: AttachedFile, raw?: File) => void
   accept?: string
 }) {
   const input = useRef<HTMLInputElement>(null)
@@ -200,7 +212,7 @@ function FilePick({
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0]
-          if (f) onChange({ name: f.name, size: f.size, type: f.type })
+          if (f) onChange({ name: f.name, size: f.size, type: f.type }, f)
           e.target.value = ''
         }}
       />
@@ -917,22 +929,6 @@ function NetworkingSetupForm({
   )
 }
 
-/** Where it happens: across a table with one person, with several, or on a video call. */
-function GatheringChoice({ value, onChange, who }: { value: GatheringFormat; onChange: (v: GatheringFormat) => void; who: string }) {
-  return (
-    <>
-      <Segmented label="One-to-one, group or virtual" value={value} onChange={onChange} options={GATHERING_FORMATS} />
-      <p className="mt-1.5 text-[10.5px] text-faint">
-        {value === 'virtual'
-          ? `A video call with ${who}.`
-          : value === 'group'
-            ? 'In the meeting room, seated at the table with several people.'
-            : `In the meeting room, seated across the table from ${who}.`}
-      </p>
-    </>
-  )
-}
-
 function TextField({
   label,
   value,
@@ -977,59 +973,132 @@ function NegotiationSetupForm({
   onDone: () => void
 }) {
   const setSession = useAppStore((s) => s.setSession)
-  const [gathering, setGathering] = useState<GatheringFormat>('one-to-one')
+  const setAccountOpen = useAppStore((s) => s.setAccountOpen)
   const [scenario, setScenario] = useState<NegotiationScenario>('salary')
+  const [group, setGroup] = useState(false)
+  const [mode, setMode] = useState<InterviewMode>('online')
   const [description, setDescription] = useState('')
+  const [field, setField] = useState('')
   const [minutes, setMinutes] = useState(15)
-  const ready = scenario !== 'other' || description.trim().length > 0
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<SetupProblem | null>(null)
+  const other = scenario === 'other'
+  const ready = !other || description.trim().length > 0
+  // Only a situation of the user's own needs writing; a preset starts at once.
+  const writing = Boolean(description.trim() || field.trim())
   const counterpart =
     scenario === 'salary' ? 'the hiring manager' : scenario === 'deadline' ? 'your manager' : scenario === 'partnership' ? 'the other company' : 'the client'
+  // The other side is played live: the session is set up on the server before the user joins it.
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const created = await createNegotiationSession({
+        scenario,
+        group,
+        mode,
+        durationMinutes: minutes,
+        description: description.trim(),
+        field: field.trim(),
+      })
+      setSession({
+        locationId: location.id,
+        area,
+        // Online is a video call and in person the room: both are the negotiation screen, not the building.
+        format: { ...format, destination: 'call' },
+        posture: 'sitting',
+        minutes,
+        negotiation: {
+          scenario,
+          group,
+          mode,
+          description: description.trim() || undefined,
+          sessionId: created.id,
+          people: created.people,
+          briefing: created.briefing,
+        },
+      })
+      onDone()
+    } catch (e) {
+      // Say what is wrong and where to fix it (consent, sign-in, email), not just that it failed.
+      setError(describeSetupProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div key="negotiation" className="anim-fade mt-4">
       <StepHeader title={format.label} hint="Set up your negotiation" onBack={onBack} />
       <div className="-mr-2 mt-1 max-h-[min(50vh,26rem)] overflow-y-auto pr-2 short:max-h-[40vh]">
-        <Section title="Format">
-          <GatheringChoice value={gathering} onChange={setGathering} who={counterpart} />
-        </Section>
         <Section title="Situation">
           <ChoiceList label="Negotiation situation" value={scenario} options={NEGOTIATION_SCENARIOS} onChange={setScenario} />
         </Section>
-        {scenario === 'other' && (
-          <Section title="Your situation">
-            <TextField
-              label="Describe your situation and what you want to achieve"
-              value={description}
-              onChange={setDescription}
-              placeholder="E.g. My landlord wants to raise the rent by 15%. I want to keep it under 5%."
-              hint="Describe the situation and what you want to achieve."
+        <Section title="Your situation" hint={other ? 'Describe it' : 'Optional: make it yours'}>
+          <TextField
+            label="Your situation and what you want"
+            value={description}
+            onChange={setDescription}
+            placeholder={
+              other
+                ? 'E.g. My landlord wants to raise the rent by 15%. I want to keep it under 5%.'
+                : 'Optional. E.g. Offer of €55k as a data analyst in Paris; I want €62k.'
+            }
+            hint={other ? 'Describe the situation and what you want to achieve.' : 'Leave empty to practise the prepared case.'}
+          />
+          <input
+            value={field}
+            onChange={(e) => setField(e.target.value)}
+            maxLength={80}
+            placeholder="Your field or job (optional), e.g. Marketing manager"
+            className={cn(textField, 'mt-2')}
+          />
+        </Section>
+        <Section title="Format">
+          <Segmented
+            label="One person or a group"
+            value={group ? 'group' : 'one'}
+            onChange={(v) => setGroup(v === 'group')}
+            options={[
+              { id: 'one', label: 'One-to-one' },
+              { id: 'group', label: 'Group' },
+            ]}
+          />
+          <div className="mt-2">
+            <Segmented
+              label="Online or in person"
+              value={mode}
+              onChange={setMode}
+              options={[
+                { id: 'online', label: 'Online' },
+                { id: 'in-person', label: 'In person' },
+              ]}
             />
-          </Section>
+          </div>
+          <p className="mt-1.5 text-[10.5px] text-faint">
+            {mode === 'online' ? 'A video call' : 'In person, across the table'} with{' '}
+            {group ? `three people, led by ${counterpart}` : counterpart}.
+          </p>
+        </Section>
+        {busy && writing && (
+          // The negotiation is being written for the user's situation: the Atrium mark turns while it works.
+          <ThinkingLogo turning expected={25} size={34} label="Writing your negotiation" className="mt-3" />
+        )}
+        {error && (
+          <p className="mt-2 text-[11.5px] text-[#fca5a5]">
+            {error.text}
+            {error.account && (
+              <button type="button" onClick={() => setAccountOpen(true)} className="ml-1.5 font-semibold text-chalk underline">
+                Open account
+              </button>
+            )}
+          </p>
         )}
         <Duration minutes={minutes} setMinutes={setMinutes} />
       </div>
-      <Button
-        variant="primary"
-        className="mt-4 w-full"
-        disabled={!ready}
-        onClick={() => {
-          setSession({
-            locationId: location.id,
-            area,
-            format: { ...format, destination: gathering === 'virtual' ? 'call' : 'meeting' },
-            posture: gathering === 'virtual' ? undefined : 'sitting',
-            minutes,
-            negotiation: {
-              format: gathering,
-              scenario,
-              description: scenario === 'other' ? description.trim() : undefined,
-            },
-          })
-          onDone()
-        }}
-      >
+      <Button variant="primary" className="mt-4 w-full" disabled={!ready || busy} onClick={() => void confirm()}>
         <IconCheck width={15} height={15} />
-        {ready ? 'Confirm session' : 'Describe your situation'}
+        {busy ? (writing ? 'This takes about 20–30 seconds' : 'Setting up…') : ready ? 'Confirm session' : 'Describe your situation'}
       </Button>
     </div>
   )
@@ -1050,20 +1119,62 @@ function MeetingSetupForm({
   onDone: () => void
 }) {
   const setSession = useAppStore((s) => s.setSession)
-  const [gathering, setGathering] = useState<GatheringFormat>('group')
+  const setAccountOpen = useAppStore((s) => s.setAccountOpen)
   const [role, setRole] = useState<MeetingRole>('participant')
   const [topic, setTopic] = useState('')
+  const [group, setGroup] = useState(true)
+  const [mode, setMode] = useState<InterviewMode>('online')
   const [material, setMaterial] = useState<AttachedFile>()
+  const [materialFile, setMaterialFile] = useState<File>()
   const [minutes, setMinutes] = useState(20)
-  const ready = topic.trim().length > 0
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<SetupProblem | null>(null)
+  const tooBig = (material?.size ?? 0) > MAX_MATERIAL_BYTES
+  const ready = topic.trim().length > 0 && !tooBig
+  // The others are played live: the meeting is written from the topic and material before the user joins.
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const created = await createMeetingSession({
+        role,
+        topic: topic.trim(),
+        group,
+        mode,
+        durationMinutes: minutes,
+        material: materialFile,
+      })
+      setSession({
+        locationId: location.id,
+        area,
+        // Online is a video call and in person the room: both are the meeting screen, not the building.
+        format: { ...format, destination: 'call' },
+        posture: 'sitting',
+        minutes,
+        meeting: {
+          role,
+          topic: topic.trim(),
+          group,
+          mode,
+          material,
+          sessionId: created.id,
+          people: created.people,
+          briefing: created.briefing,
+        },
+      })
+      onDone()
+    } catch (e) {
+      // Say what is wrong and where to fix it (consent, sign-in, email), not just that it failed.
+      setError(describeSetupProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div key="meeting" className="anim-fade mt-4">
       <StepHeader title={format.label} hint="Set up your meeting" onBack={onBack} />
       <div className="-mr-2 mt-1 max-h-[min(50vh,26rem)] overflow-y-auto pr-2 short:max-h-[40vh]">
-        <Section title="Format">
-          <GatheringChoice value={gathering} onChange={setGathering} who="a colleague" />
-        </Section>
         <Section title="Your role">
           <ChoiceList label="Your role in the meeting" value={role} options={MEETING_ROLES} onChange={setRole} />
         </Section>
@@ -1075,34 +1186,247 @@ function MeetingSetupForm({
             placeholder="E.g. Weekly project sync: the launch slipped two weeks and we need a new plan."
           />
         </Section>
-        <Section title="Material" hint="Optional">
+        <Section title="Material" hint={tooBig ? 'Larger than 8 MB' : 'Optional: the meeting is built on it'}>
           <FilePick
-            label="Upload relevant material"
+            label="PDF, Word, PowerPoint or text"
             file={material}
-            onChange={setMaterial}
-            accept=".pdf,.doc,.docx,.txt,.rtf,.md,.odt,.ppt,.pptx,.key,.xls,.xlsx,.csv,.png,.jpg,.jpeg"
+            onChange={(file, raw) => {
+              setMaterial(file)
+              setMaterialFile(raw)
+            }}
+            accept=".pdf,.docx,.pptx,.txt,.md"
           />
         </Section>
+        <Section title="Format">
+          <Segmented
+            label="One colleague or a group"
+            value={group ? 'group' : 'one'}
+            onChange={(v) => setGroup(v === 'group')}
+            options={[
+              { id: 'one', label: 'One-to-one' },
+              { id: 'group', label: 'Group' },
+            ]}
+          />
+          <div className="mt-2">
+            <Segmented
+              label="Online or in person"
+              value={mode}
+              onChange={setMode}
+              options={[
+                { id: 'online', label: 'Online' },
+                { id: 'in-person', label: 'In person' },
+              ]}
+            />
+          </div>
+          <p className="mt-1.5 text-[10.5px] text-faint">
+            {mode === 'online' ? 'A video call' : 'In person, around the table'} with{' '}
+            {group ? 'three colleagues' : 'one colleague'}.{role === 'leader' && ' You open and run it.'}
+          </p>
+        </Section>
+        {busy && (
+          // The meeting is being written from the topic and material: the Atrium mark turns while it works.
+          <ThinkingLogo turning expected={25} size={34} label="Preparing your meeting" className="mt-3" />
+        )}
+        {error && (
+          <p className="mt-2 text-[11.5px] text-[#fca5a5]">
+            {error.text}
+            {error.account && (
+              <button type="button" onClick={() => setAccountOpen(true)} className="ml-1.5 font-semibold text-chalk underline">
+                Open account
+              </button>
+            )}
+          </p>
+        )}
         <Duration minutes={minutes} setMinutes={setMinutes} />
       </div>
-      <Button
-        variant="primary"
-        className="mt-4 w-full"
-        disabled={!ready}
-        onClick={() => {
-          setSession({
-            locationId: location.id,
-            area,
-            format: { ...format, destination: gathering === 'virtual' ? 'call' : 'meeting' },
-            posture: gathering === 'virtual' ? undefined : 'sitting',
-            minutes,
-            meeting: { format: gathering, role, topic: topic.trim(), material },
-          })
-          onDone()
-        }}
-      >
+      <Button variant="primary" className="mt-4 w-full" disabled={!ready || busy} onClick={() => void confirm()}>
         <IconCheck width={15} height={15} />
-        {ready ? 'Confirm session' : 'Add the topic & context'}
+        {busy ? 'This takes about 20–30 seconds' : ready ? 'Confirm session' : tooBig ? 'Choose a smaller file' : 'Add the topic & context'}
+      </Button>
+    </div>
+  )
+}
+
+/** Presentation: the talk, who it is for, the slides, and what the audience's questions are about. */
+function PresentationSetupForm({
+  location,
+  area,
+  format,
+  onBack,
+  onDone,
+}: {
+  location: Location
+  area: string
+  format: PracticeFormat
+  onBack: () => void
+  onDone: () => void
+}) {
+  const setSession = useAppStore((s) => s.setSession)
+  const setAccountOpen = useAppStore((s) => s.setAccountOpen)
+  const deck = useAppStore((s) => s.deck)
+  const setDeck = useAppStore((s) => s.setDeck)
+  const [title, setTitle] = useState('')
+  const [audience, setAudience] = useState('')
+  const [questions, setQuestions] = useState<'talk' | 'slides'>('talk')
+  const [minutes, setMinutes] = useState(10)
+  // The slides as picked: shown from the rendered deck, read for their text on the server.
+  const [slidesFile, setSlidesFile] = useState<File>()
+  const [loading, setLoading] = useState<string | null>(null)
+  const [slideError, setSlideError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<SetupProblem | null>(null)
+  const picker = useRef<HTMLInputElement>(null)
+  const pickSlides = async (list: FileList | null) => {
+    const files = list ? [...list] : []
+    if (files.length === 0) return
+    setSlideError(null)
+    setLoading('Preparing slides…')
+    try {
+      setDeck(await loadDeck(files, (done, total) => setLoading(total === 0 ? 'Converting PowerPoint…' : `Preparing slides… ${done}/${total}`)))
+      setSlidesFile(files[0])
+    } catch (e) {
+      setSlideError(e instanceof DeckError ? e.message : 'These slides couldn’t be opened.')
+    } finally {
+      setLoading(null)
+    }
+  }
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const created = await createPresentationSession({
+        format: presentationFormatOf(format),
+        questions,
+        title: title.trim(),
+        audience: audience.trim(),
+        durationMinutes: minutes,
+        slides: deck ? slidesFile : undefined,
+      })
+      setSession({
+        locationId: location.id,
+        area,
+        // All three formats are the presentation screen, with a live audience.
+        format: { ...format, destination: 'call' },
+        posture: 'standing',
+        minutes,
+        presentation: {
+          format: presentationFormatOf(format),
+          questions,
+          title: title.trim() || undefined,
+          sessionId: created.id,
+          people: created.people,
+          briefing: created.briefing,
+        },
+      })
+      onDone()
+    } catch (e) {
+      // Say what is wrong and where to fix it (consent, sign-in, email), not just that it failed.
+      setError(describeSetupProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div key="presentation" className="anim-fade mt-4">
+      <StepHeader title={format.label} hint="Set up your presentation" onBack={onBack} />
+      <div className="-mr-2 mt-1 max-h-[min(50vh,26rem)] overflow-y-auto pr-2 short:max-h-[40vh]">
+        <Section title="Your talk">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={200}
+            placeholder="Title (optional), e.g. Q3 results and the plan for Q4"
+            className={textField}
+          />
+          <input
+            value={audience}
+            onChange={(e) => setAudience(e.target.value)}
+            maxLength={300}
+            placeholder="Who it is for (optional), e.g. the leadership team"
+            className={cn(textField, 'mt-2')}
+          />
+        </Section>
+        <Section title="Slides" hint="Optional: the questions are built on them">
+          <input
+            ref={picker}
+            type="file"
+            accept={DECK_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void pickSlides(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          {deck ? (
+            <div className="flex h-10 items-center gap-2 rounded-xl border border-jade-400/30 bg-jade-500/10 pl-3 pr-1.5">
+              <IconFile width={15} height={15} className="shrink-0 text-jade-400" />
+              <div className="min-w-0 flex-1 leading-tight">
+                <div className="truncate text-[12px] font-medium text-chalk">{deck.name}</div>
+                <div className="text-[10px] text-faint">{deck.slides.length} slides</div>
+              </div>
+              <button
+                type="button"
+                aria-label="Remove slides"
+                onClick={() => {
+                  setDeck(null)
+                  setSlidesFile(undefined)
+                }}
+                className="grid size-7 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-white/8 hover:text-chalk"
+              >
+                <IconClose width={13} height={13} />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => picker.current?.click()}
+              disabled={Boolean(loading)}
+              className="flex h-10 w-full items-center gap-2 rounded-xl border border-dashed border-white/8 bg-white/4 px-3 text-left text-[12.5px] font-medium text-mist transition-all duration-200 hover:bg-white/8 hover:text-chalk"
+            >
+              <IconUpload width={15} height={15} className="shrink-0" />
+              <span className="flex-1">{loading ?? 'Upload your slides'}</span>
+              <span className="text-[10.5px] text-faint">PDF or PowerPoint</span>
+            </button>
+          )}
+          {slideError && <p className="mt-1 text-[10.5px] text-[#fca5a5]">{slideError}</p>}
+        </Section>
+        <Section title="Questions">
+          <Segmented
+            label="What the audience asks about"
+            value={questions}
+            onChange={setQuestions}
+            options={[
+              { id: 'talk', label: 'My talk & slides' },
+              { id: 'slides', label: 'My slides only' },
+            ]}
+          />
+          <p className="mt-1.5 text-[10.5px] text-faint">
+            {questions === 'talk'
+              ? 'The audience listens to your whole talk in silence, then asks about what you said and your slides.'
+              : 'The audience does not hear your talk; after it, they ask about your slides.'}
+          </p>
+        </Section>
+        {busy && (
+          // The audience is being written from the talk and slides: the Atrium mark turns while it works.
+          <ThinkingLogo turning expected={25} size={34} label="Preparing your audience" className="mt-3" />
+        )}
+        {error && (
+          <p className="mt-2 text-[11.5px] text-[#fca5a5]">
+            {error.text}
+            {error.account && (
+              <button type="button" onClick={() => setAccountOpen(true)} className="ml-1.5 font-semibold text-chalk underline">
+                Open account
+              </button>
+            )}
+          </p>
+        )}
+        <Duration minutes={minutes} setMinutes={setMinutes} />
+      </div>
+      <Button variant="primary" className="mt-4 w-full" disabled={busy || Boolean(loading)} onClick={() => void confirm()}>
+        <IconCheck width={15} height={15} />
+        {busy ? 'This takes about 20–30 seconds' : 'Confirm session'}
       </Button>
     </div>
   )
@@ -1123,14 +1447,52 @@ function SalesSetupForm({
   onDone: () => void
 }) {
   const setSession = useAppStore((s) => s.setSession)
+  const setAccountOpen = useAppStore((s) => s.setAccountOpen)
   const [type, setType] = useState<SalesType>('pitch-demo')
   const [mode, setMode] = useState<InterviewMode>('online')
   const [minutes, setMinutes] = useState(15)
+  // The deal is written for what the user actually sells: someone else's objections teach little.
+  const [product, setProduct] = useState('')
+  const [company, setCompany] = useState('')
+  const [customer, setCustomer] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<SetupProblem | null>(null)
   // An outreach call is remote by definition.
   const remoteOnly = type === 'call-outreach'
+  const investors = type === 'investor-pitch'
   const effectiveMode: InterviewMode = remoteOnly ? 'online' : mode
-  const who =
-    type === 'investor-pitch' ? 'a panel of investors' : type === 'account-management' ? 'your client' : 'a prospect'
+  const who = investors ? 'three investors' : type === 'account-management' ? 'your client' : 'a prospect'
+  const ready = product.trim().length > 1
+  // The other side is played live: the session is set up on the server before the user joins it.
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const created = await createSalesSession({
+        type,
+        mode: effectiveMode,
+        durationMinutes: minutes,
+        product: product.trim(),
+        company: company.trim(),
+        customer: investors ? '' : customer.trim(),
+      })
+      setSession({
+        locationId: location.id,
+        area,
+        // Online is a video call and in person a meeting room: both are the sales screen, not the building.
+        format: { ...format, destination: 'call' },
+        posture: 'sitting',
+        minutes,
+        sales: { type, mode: effectiveMode, sessionId: created.id, people: created.people, briefing: created.briefing },
+      })
+      onDone()
+    } catch (e) {
+      // Say what is wrong and where to fix it (consent, sign-in, email), not just that it failed.
+      setError(describeSetupProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div key="sales" className="anim-fade mt-4">
@@ -1138,6 +1500,38 @@ function SalesSetupForm({
       <div className="-mr-2 mt-1 max-h-[min(50vh,26rem)] overflow-y-auto pr-2 short:max-h-[40vh]">
         <Section title="Situation">
           <ChoiceList label="Sales situation" value={type} options={SALES_TYPES} onChange={setType} />
+        </Section>
+        <Section
+          title={investors ? 'Your startup' : 'What you sell'}
+          hint={ready ? undefined : 'So the deal is your kind of deal'}
+        >
+          <input
+            value={product}
+            onChange={(e) => setProduct(e.target.value)}
+            maxLength={200}
+            placeholder={
+              investors
+                ? 'What your startup does, e.g. AI bookkeeping for small restaurants'
+                : 'Your product or service, e.g. cloud accounting software for SMEs'
+            }
+            className={textField}
+          />
+          <input
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+            maxLength={80}
+            placeholder={investors ? 'Startup name (optional)' : 'Your company (optional)'}
+            className={cn(textField, 'mt-2')}
+          />
+          {!investors && (
+            <input
+              value={customer}
+              onChange={(e) => setCustomer(e.target.value)}
+              maxLength={120}
+              placeholder="Who you sell to (optional), e.g. hospitals, retail chains"
+              className={cn(textField, 'mt-2')}
+            />
+          )}
         </Section>
         <Section title="Format">
           <Segmented
@@ -1150,29 +1544,29 @@ function SalesSetupForm({
             ]}
           />
           <p className="mt-1.5 text-[10.5px] text-faint">
-            {effectiveMode === 'online' ? 'A video call' : 'In the meeting room, seated at the table'} with {who}.
+            {effectiveMode === 'online' ? 'A video call' : 'In person, across the table'} with {who}.
             {remoteOnly && ' Outreach happens on a call.'}
           </p>
         </Section>
+        {busy && (
+          // The deal is being written for what the user sells: the Atrium mark turns while it works.
+          <ThinkingLogo turning expected={25} size={34} label="Writing your deal for what you sell" className="mt-3" />
+        )}
+        {error && (
+          <p className="mt-2 text-[11.5px] text-[#fca5a5]">
+            {error.text}
+            {error.account && (
+              <button type="button" onClick={() => setAccountOpen(true)} className="ml-1.5 font-semibold text-chalk underline">
+                Open account
+              </button>
+            )}
+          </p>
+        )}
         <Duration minutes={minutes} setMinutes={setMinutes} />
       </div>
-      <Button
-        variant="primary"
-        className="mt-4 w-full"
-        onClick={() => {
-          setSession({
-            locationId: location.id,
-            area,
-            format: { ...format, destination: effectiveMode === 'online' ? 'call' : 'meeting' },
-            posture: effectiveMode === 'in-person' ? 'sitting' : undefined,
-            minutes,
-            sales: { type, mode: effectiveMode },
-          })
-          onDone()
-        }}
-      >
+      <Button variant="primary" className="mt-4 w-full" disabled={!ready || busy} onClick={() => void confirm()}>
         <IconCheck width={15} height={15} />
-        Confirm session
+        {busy ? 'This takes about 20–30 seconds' : ready ? 'Confirm session' : investors ? 'Describe your startup' : 'Say what you sell'}
       </Button>
     </div>
   )
@@ -1195,13 +1589,71 @@ function LeadershipSetupForm({
   const setSession = useAppStore((s) => s.setSession)
   const [mode, setMode] = useState<'full' | 'scenario'>('full')
   const [scenario, setScenario] = useState<LeadershipScenario>()
-  const [minutes, setMinutes] = useState(30)
-  const ready = mode === 'full' || Boolean(scenario)
+  const [minutes, setMinutes] = useState(20)
+  // The call is set in the user's own field: a scenario from someone else's job teaches nothing.
+  const [domain, setDomain] = useState<string>()
+  const [otherDomain, setOtherDomain] = useState('')
+  const [jobTitle, setJobTitle] = useState('')
+  const field = domain === 'other' ? otherDomain.trim() : domain
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<SetupProblem | null>(null)
+  const setAccountOpen = useAppStore((s) => s.setAccountOpen)
+  const ready = Boolean(field) && (mode === 'full' || Boolean(scenario))
+  // The team's live faces need the face server, which takes a minute to start: start it now.
+  useEffect(() => holdFaces(), [])
+  // The team is played live: the call is set up on the server before the user joins it.
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const chosen = mode === 'scenario' ? scenario : undefined
+      const created = await createLeadershipSession({
+        mode,
+        scenario: chosen,
+        durationMinutes: minutes,
+        domain: field,
+        jobTitle: jobTitle.trim(),
+      })
+      setSession({
+        locationId: location.id,
+        area,
+        format,
+        posture: 'sitting',
+        minutes,
+        leadership: { mode, scenario: chosen, sessionId: created.id, team: created.team, briefing: created.briefing },
+      })
+      onDone()
+    } catch (e) {
+      // Say what is wrong and where to fix it (consent, sign-in, email), not just that it failed.
+      setError(describeSetupProblem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div key="leadership" className="anim-fade mt-4">
       <StepHeader title={format.label} hint="Set up your leadership session" onBack={onBack} />
       <div className="-mr-2 mt-1 max-h-[min(50vh,26rem)] overflow-y-auto pr-2 short:max-h-[40vh]">
+        <Section title="Your field" hint={field ? undefined : 'So the situations are your kind of work'}>
+          <ChoiceList label="Your field" value={domain} options={LEADERSHIP_DOMAINS} onChange={setDomain} columns={2} />
+          {domain === 'other' && (
+            <input
+              value={otherDomain}
+              onChange={(e) => setOtherDomain(e.target.value)}
+              maxLength={80}
+              placeholder="e.g. Architecture firm, NGO, public administration"
+              className={cn(textField, 'mt-2')}
+            />
+          )}
+          <input
+            value={jobTitle}
+            onChange={(e) => setJobTitle(e.target.value)}
+            maxLength={80}
+            placeholder="Your job title (optional), e.g. Engineering manager"
+            className={cn(textField, 'mt-2')}
+          />
+        </Section>
         <Section title="Practice">
           <ChoiceList
             label="Full simulation or one scenario"
@@ -1211,7 +1663,11 @@ function LeadershipSetupForm({
               if (m === 'full') setScenario(undefined)
             }}
             options={[
-              { id: 'full', label: 'Full leadership simulation', note: 'Several situations in a row, as they come' },
+              {
+                id: 'full',
+                label: 'Full leadership simulation',
+                note: 'A team call where a slipped launch, new projects and a conflict all come up',
+              },
               { id: 'scenario', label: 'Practice a specific scenario', note: 'Pick one situation to work on' },
             ]}
           />
@@ -1221,27 +1677,33 @@ function LeadershipSetupForm({
             <ChoiceList label="Leadership scenario" value={scenario} options={LEADERSHIP_SCENARIOS} onChange={setScenario} />
           </Section>
         )}
-        <p className="mt-2 text-[10.5px] text-faint">In the meeting room, seated at the table with your team.</p>
+        <p className="mt-2 text-[10.5px] text-faint">
+          A video call with your team — Laura, Marcus and Nadia, in roles from your field. You lead it.
+        </p>
+        {busy && (
+          // The scenario is being written for the user's field: the Atrium mark turns while it works.
+          <ThinkingLogo turning expected={35} size={34} label="Writing your scenario for your field" className="mt-3" />
+        )}
+        {error && (
+          <p className="mt-2 text-[11.5px] text-[#fca5a5]">
+            {error.text}
+            {error.account && (
+              <button type="button" onClick={() => setAccountOpen(true)} className="ml-1.5 font-semibold text-chalk underline">
+                Open account
+              </button>
+            )}
+          </p>
+        )}
         <Duration minutes={minutes} setMinutes={setMinutes} />
       </div>
       <Button
         variant="primary"
         className="mt-4 w-full"
-        disabled={!ready}
-        onClick={() => {
-          setSession({
-            locationId: location.id,
-            area,
-            format,
-            posture: 'sitting',
-            minutes,
-            leadership: { mode, scenario: mode === 'scenario' ? scenario : undefined },
-          })
-          onDone()
-        }}
+        disabled={!ready || busy}
+        onClick={() => void confirm()}
       >
         <IconCheck width={15} height={15} />
-        {ready ? 'Confirm session' : 'Choose a scenario'}
+        {busy ? 'This takes about 30–40 seconds' : ready ? 'Confirm session' : field ? 'Choose a scenario' : 'Choose your field'}
       </Button>
     </div>
   )
@@ -1253,7 +1715,14 @@ function LeadershipSetupForm({
  * single format goes straight to its setup. Areas without formats yet stay as
  * plain labels.
  */
-export function PracticePicker({ location }: { location: Location }) {
+export function PracticePicker({
+  location,
+  onSetupChange,
+}: {
+  location: Location
+  /** Whether a setup form is open: the card around it then hides its own way-in buttons. */
+  onSetupChange?: (open: boolean) => void
+}) {
   const touch = useCoarsePointer()
   const session = useAppStore((s) => s.session)
   const setSession = useAppStore((s) => s.setSession)
@@ -1262,6 +1731,10 @@ export function PracticePicker({ location }: { location: Location }) {
   const clearJourneyRequest = useAppStore((s) => s.clearJourneyRequest)
 
   const [step, setStep] = useState<Step>({ kind: 'areas' })
+  useEffect(() => {
+    onSetupChange?.(step.kind === 'setup')
+    return () => onSetupChange?.(false)
+  }, [step.kind, onSetupChange])
   const [posture, setPosture] = useState<Posture>('standing')
   const [minutes, setMinutes] = useState(DURATION_DEFAULT)
   const [journey, setJourney] = useState<JourneyRequest | undefined>()
@@ -1280,6 +1753,11 @@ export function PracticePicker({ location }: { location: Location }) {
   }, [journeyRequest, location.id, clearJourneyRequest])
 
   const ready = session?.locationId === location.id ? session : null
+
+  // The face server takes over a minute to start, so it starts the moment the setup of a session
+  // with a face is opened; the setup and the walk in cover the wait.
+  const warmFaces = step.kind === 'setup' && showsLiveFace(step.format)
+  useEffect(() => (warmFaces ? holdFaces() : undefined), [warmFaces])
 
   const openArea = (area: string) => {
     const formats = PRACTICE_FORMATS[area] ?? []
@@ -1320,6 +1798,15 @@ export function PracticePicker({ location }: { location: Location }) {
     const back = () =>
       setStep((PRACTICE_FORMATS[step.area] ?? []).length === 1 ? { kind: 'areas' } : { kind: 'formats', area: step.area })
 
+    if (format.kind === 'presentation') {
+      return <PresentationSetupForm location={location} area={step.area} format={format} onBack={back} onDone={() => setStep({ kind: 'areas' })} />
+    }
+    if (format.kind === 'debate') {
+      return <DebateSetupForm location={location} area={step.area} format={format} onBack={back} onDone={() => setStep({ kind: 'areas' })} />
+    }
+    if (format.kind === 'admission') {
+      return <AdmissionSetupForm location={location} area={step.area} format={format} onBack={back} onDone={() => setStep({ kind: 'areas' })} />
+    }
     if (format.kind === 'exam') {
       return <ExamSetupForm location={location} area={step.area} format={format} onBack={back} onDone={() => setStep({ kind: 'areas' })} />
     }

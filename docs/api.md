@@ -48,6 +48,7 @@ Stable `code` values include `unauthenticated`, `invalid_token`, `token_revoked`
 | POST | `/interview/applications/{id}/blueprints/{bpId}/rounds/{roundId}/guide` | writes (or rewrites) it and waits: `{approach, questions[{question, reported, sources, assesses, outline, sampleAnswer, resumeHook, pitfalls}], standOut[{title, idea, how, why, effort}], questionsToAsk[{question, why}], hasResume}`; consent, verified email, kill switch, `roundGuides` daily quota (free 15, internal 100); 404 unless the journey is ready |
 | POST | `/interview/sessions` | `{id, practice: "general_behavioral"}` or `{id, applicationId, blueprintId, roundId}` plus `mode`, `panel`, `durationMinutes` |
 | POST | `/interview/sessions/{id}/retry` | `{id}`; next attempt targeting the weakest competencies |
+| POST | `/interview/sessions/{id}/avatar-session` | Short-lived avatar token for the interviewer's face. The server chooses the face and voice from the round type; the provider key never reaches the client. 503 when no provider is configured or it is unreachable, and the interview then runs on audio alone |
 
 ## Oral exam module
 
@@ -69,6 +70,7 @@ exam covers and how it is run are worked out from the material, never asked.
 | GET | `/exam/courses/{id}/analyses/{analysisId}` | the knowledge map, each material's type, the exam style with its evidence, and `effectiveStyle` |
 | POST | `/exam/sessions` | `{id, courseId?, analysisId?, style?, durationMinutes}`; the style is settled server-side (student's answer, then the analysis, then a spoken exam) |
 | POST | `/exam/sessions/{id}/retry` | `{id}`; the same exam again with new questions |
+| POST | `/exam/sessions/{id}/avatar-session` | short-lived token for the examiner's face; 503 means the exam runs on voice alone |
 
 ## Sessions (all modules)
 

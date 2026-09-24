@@ -22,6 +22,19 @@ export const CloseCode = {
   UNAVAILABLE: 4503,
 } as const
 
+/**
+ * Why a 4403 closed the socket: the gateway sends one of these as the close reason
+ * (`ForbiddenReason` in live_protocol.py). They are wire format — the candidate reads a different
+ * message for each, and a socket closed for an unverified address is worth one more try on a
+ * freshly minted token, where a missing consent is not.
+ */
+export const ForbiddenReason = {
+  EMAIL_UNVERIFIED: 'email not verified',
+  CONSENT_REQUIRED: 'consent_required',
+  ACCOUNT_DELETING: 'account_deleting',
+  ORIGIN: 'origin not allowed',
+} as const
+
 /** Closing for these reasons will not succeed on retry. */
 export const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([
   CloseCode.PROTOCOL_ERROR,
@@ -53,6 +66,8 @@ export type ServerMessage =
   | { type: 'interrupted'; turnSeq: number }
   /** The next interviewer turn is a panel colleague's question, voiced by the server. */
   | { type: 'panel_speaker'; turnSeq: number; name: string }
+  /** The examiner wrote on the board: a problem, its numbers, a formula. */
+  | { type: 'board_write'; text: string; mediaMs: number }
   | { type: 'turn_complete'; turnSeq: number }
   | { type: 'time_left'; ms: number }
   | { type: 'reconnect_soon' }
@@ -62,7 +77,13 @@ export type ClientControl =
   | { type: 'playback_started'; turnSeq: number; mediaMs: number }
   | { type: 'playback_stopped'; turnSeq: number; mediaMs: number }
   | { type: 'code_snapshot'; mediaMs: number; language: string; text: string }
+  /** The board as it was written by hand, so the examiner can read the working. */
+  | { type: 'board_image'; mediaMs: number; jpegBase64: string }
   | { type: 'ping'; mediaMs: number }
+  /** The candidate is in place: the interviewer may open (after `holdOpening`). */
+  | { type: 'begin' }
+  /** A presentation's speaker takes questions: the audience, silent until now, may speak. */
+  | { type: 'release' }
   | { type: 'end' }
 
 export function encodeAudioFrame(seq: number, captureMs: number, pcm: Int16Array): ArrayBuffer {

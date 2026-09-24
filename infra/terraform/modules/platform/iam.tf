@@ -175,3 +175,22 @@ resource "google_storage_bucket_iam_member" "speech_processing" {
   role   = "roles/storage.objectAdmin"
   member = time_sleep.speech_identity.triggers["member"]
 }
+
+# The face server's GPU VMs are started by the API when a candidate opens the setup of a session
+# with a face (backend/app/platform/faces). Only reading and starting them: the VMs stop
+# themselves once idle, so the API never needs to stop or change one.
+resource "google_project_iam_custom_role" "face_starter" {
+  count       = lookup(var.app_config, "FACE_VMS", "") == "" ? 0 : 1
+  project     = var.project_id
+  role_id     = "atriumFaceStarter"
+  title       = "Atrium face server starter"
+  description = "Read and start the lip-sync face server's VMs."
+  permissions = ["compute.instances.get", "compute.instances.start", "compute.zoneOperations.get"]
+}
+
+resource "google_project_iam_member" "api_face_starter" {
+  count   = length(google_project_iam_custom_role.face_starter)
+  project = var.project_id
+  role    = google_project_iam_custom_role.face_starter[0].name
+  member  = google_service_account.api.member
+}

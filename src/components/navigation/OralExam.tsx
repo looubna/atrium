@@ -11,16 +11,18 @@ import { ApiError } from '@/platform/api/client'
 import { useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
 import { IconVideo, IconVideoOff } from '../ui/Icon'
+import { AvatarTile } from './AvatarTile'
+import { FramingHint } from './FramingHint'
 import { LeaveArrow, LiveOverlay, SceneCaption } from './LivePanels'
 
 /**
  * The oral exam itself, in the room the exam is actually held in.
  *
- * When the professor asks the questions, that is a desk with two chairs: their
- * face fills the screen and there is nothing else on it — no timer, no meters, no
- * captions to read instead of thinking. When the exam is worked at a board, the
- * screen is split: the professor on one side, the board the student writes on
- * (and the examiner reads as they write) on the other.
+ * The screen is split: the professor on one side, and on the other the board beside
+ * their desk — no timer, no meters, no captions to read instead of thinking. The
+ * professor writes up anything with numbers or several steps of reasoning, and the
+ * student works it there by hand or by typing while the examiner reads along. In a
+ * board exam every problem is worked there; otherwise most questions are just talked.
  *
  * The camera is only ever on if the student asked for feedback on how they come
  * across; it can be turned off here at any time.
@@ -69,14 +71,23 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
   const board = exam.style === 'board_work'
   const examiner = examinerFor(exam.style)
   const roomPhoto = ROOM_PHOTO.one[orientation]
+  // The professor already at the desk, the frame their video starts from, so nobody ever sees an
+  // empty chair while the face connects. The room photo only if this person has no still yet.
+  const [still, setStill] = useState(`/faces/${examiner.avatarId}.jpg`)
 
   const [cameraOn, setCameraOn] = useState(Boolean(exam.camera))
   const [started, setStarted] = useState(false)
   const camera = useCamera(started && cameraOn)
   // Eye contact in the room means looking at the examiner, not into a lens.
   const tracker = useMemo(() => ({ setting: 'screen' as const }), [])
-  const room = useInterviewRoom({ sessionId, camera: camera.stream, tracker })
-  const { live, liveActive } = room
+  // If the lip-sync server is down, the professor still talks and moves from his own
+  // footage rather than the exam dropping to a photograph.
+  const filmed = useMemo(
+    () => ({ avatarId: examiner.avatarId, name: examiner.name, role: examiner.role }),
+    [examiner.avatarId, examiner.name, examiner.role],
+  )
+  const room = useInterviewRoom({ sessionId, camera: camera.stream, tracker, module: 'exam', filmed })
+  const { live, liveActive, avatar, avatarFailed } = room
   const { phase } = live.state
 
   useEffect(() => {
@@ -92,13 +103,30 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
     return () => setSceneCovered(false)
   }, [setSceneCovered])
 
-  const name = examiner.name
-  // The examiner has no face: the room photo carries the scene and the voice does the rest.
-  const faceless = live.state.interviewerSpeaking
+  const name = avatar?.name ?? examiner.name
+  const speaking = live.state.interviewerSpeaking
+  const faceless = speaking && !room.leadFaceLive
 
   const professor = (
     <div className="relative size-full overflow-hidden bg-[#0b0d12]">
-      <img src={roomPhoto} alt="" className="absolute inset-0 size-full object-cover" />
+      <img
+        src={still}
+        alt=""
+        onError={() => setStill(roomPhoto)}
+        className="absolute inset-0 size-full object-cover"
+      />
+      {avatar && !avatarFailed && (
+        <AvatarTile
+          variant="closeup"
+          renderer={avatar.renderer}
+          name={avatar.name}
+          role={avatar.role}
+          shown
+          onLive={room.setFaceOnScreen}
+          onFailed={room.onAvatarFailed}
+          onEnded={room.onFaceEnded}
+        />
+      )}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 pb-2 pt-8">
         <div className="text-[12.5px] font-semibold text-chalk">{name}</div>
         <div className="text-[11px] text-mist">{exam.subject || 'Oral exam'}</div>
@@ -108,21 +136,17 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
 
   return (
     <div className="absolute inset-0 z-[45] bg-black" role="region" aria-label="Oral exam">
-      {board ? (
-        <div className={cn('absolute inset-0 flex gap-2 p-2', orientation === 'portrait' ? 'flex-col' : 'flex-row')}>
-          <div
-            className={cn(
-              'relative min-h-0 overflow-hidden rounded-2xl',
-              orientation === 'portrait' ? 'h-[42%]' : 'w-[42%]',
-            )}
-          >
-            {professor}
-          </div>
-          <Board live={live} className="min-h-0 flex-1" />
+      <div className={cn('absolute inset-0 flex gap-2 p-2', orientation === 'portrait' ? 'flex-col' : 'flex-row')}>
+        <div
+          className={cn(
+            'relative min-h-0 overflow-hidden rounded-2xl',
+            orientation === 'portrait' ? 'h-[42%]' : 'w-[50%]',
+          )}
+        >
+          {professor}
         </div>
-      ) : (
-        <div className="absolute inset-0">{professor}</div>
-      )}
+        <Board live={live} className="min-h-0 flex-1" />
+      </div>
 
       {faceless && <SceneCaption>{`${name.split(' ').slice(-1)[0]} is speaking`}</SceneCaption>}
 
@@ -158,10 +182,12 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
           <p className="max-w-sm text-center text-[11px] leading-relaxed text-mist">
             {board
               ? 'Work each problem on the board and say what you are doing; your examiner reads it as you write.'
-              : 'Answer out loud. Take a moment to think — silence is normal in an exam.'}
+              : 'Answer out loud. When a question needs working, it goes up on the board — write or type your steps there.'}
           </p>
         </div>
       )}
+
+      <FramingHint framing={room.framing} />
 
       <LiveOverlay
         live={live}

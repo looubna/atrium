@@ -66,6 +66,18 @@ class Purpose(StrEnum):
     DEBATE_TOPICS = "debate_topics"
     DEBATE_MATERIAL = "debate_material"
     DEBATE_EVALUATOR = "debate_evaluator"
+    ADMISSION_RESEARCH = "admission_research"
+    ADMISSION_PROFILE = "admission_profile"
+    ADMISSION_ANALYSIS = "admission_analysis"
+    ADMISSION_STRATEGY = "admission_strategy"
+    LEADERSHIP_WORLD = "leadership_world"
+    SALES_DEAL = "sales_deal"
+    NEGOTIATION_DEAL = "negotiation_deal"
+    MEETING_PLAN = "meeting_plan"
+    PRESENTATION_AUDIENCE = "presentation_audience"
+    LANGUAGE_PLAN = "language_plan"
+    LANGUAGE_TIP = "language_tip"
+    LANGUAGE_WRAPUP = "language_wrapup"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +103,37 @@ def profile_for(purpose: Purpose, settings: Settings) -> ModelProfile:
             return ModelProfile(
                 model, location, temperature=0.3, max_output_tokens=8_000, timeout_s=240, max_llm_calls=8,
                 thinking_level="LOW",
+            )
+        case Purpose.ADMISSION_RESEARCH:
+            # Three passes over the web in one run — the funder's own pages, then what past
+            # applicants wrote, then the accounts of people who said they were selected — and
+            # the result is cached for everyone applying to the same cycle. Nobody is waiting
+            # on a screen for it, so it gets the room to search properly.
+            return ModelProfile(
+                model, location, temperature=0.3, max_output_tokens=14_000, timeout_s=300, max_llm_calls=14,
+                thinking_level="LOW",
+            )
+        case Purpose.ADMISSION_PROFILE:
+            # Turns those notes into the profile every candidate for this opportunity reads.
+            # Worth real reasoning: this is where a stranger's blog post has to be told apart
+            # from a published requirement.
+            return ModelProfile(
+                model, location, temperature=0.2, max_output_tokens=14_000, timeout_s=180, thinking_level="LOW"
+            )
+        case Purpose.ADMISSION_ANALYSIS:
+            # Reads the candidate's own documents into claims, each tied to the words it was
+            # read in. Long inputs — a CV, a statement, a study plan and a proposal together —
+            # and the failure to avoid is a flattering summary of what is not written there,
+            # so it is given room to quote rather than paraphrase.
+            return ModelProfile(
+                model, location, temperature=0.1, max_output_tokens=14_000, timeout_s=240, thinking_level="LOW"
+            )
+        case Purpose.ADMISSION_STRATEGY:
+            # The only call that sees both profiles, and the one the dashboard is made of:
+            # joining what a funder wants to what one person can actually show is the whole
+            # feature, so it gets reasoning room rather than being rushed.
+            return ModelProfile(
+                model, location, temperature=0.3, max_output_tokens=14_000, timeout_s=240, thinking_level="LOW"
             )
         case Purpose.BLUEPRINT:
             return ModelProfile(
@@ -148,6 +191,31 @@ def profile_for(purpose: Purpose, settings: Settings) -> ModelProfile:
         case Purpose.DEBATE_EVALUATOR:
             # After the debate, over the whole transcript and the argument state.
             return ModelProfile(model, location, temperature=0.2, max_output_tokens=16_000, timeout_s=240)
+        case Purpose.LEADERSHIP_WORLD:
+            # Leadership scenarios rewritten for the user's field, while the setup says "Setting up the call".
+            return ModelProfile(
+                model, location, temperature=0.6, max_output_tokens=8_000, timeout_s=60, thinking_level="LOW"
+            )
+        case Purpose.SALES_DEAL | Purpose.NEGOTIATION_DEAL | Purpose.MEETING_PLAN | Purpose.PRESENTATION_AUDIENCE:
+            # A sales deal, negotiation, meeting or audience written for the user's own case, while the setup waits.
+            return ModelProfile(
+                model, location, temperature=0.6, max_output_tokens=6_000, timeout_s=60, thinking_level="LOW"
+            )
+        case Purpose.LANGUAGE_PLAN:
+            # A learner's plan, written while the Language Center's onboarding waits.
+            return ModelProfile(
+                model, location, temperature=0.6, max_output_tokens=4_000, timeout_s=60, thinking_level="LOW"
+            )
+        case Purpose.LANGUAGE_TIP:
+            # A tip or a translation while the learner is mid-conversation: short, and it has to be quick.
+            return ModelProfile(
+                model, location, temperature=0.2, max_output_tokens=600, timeout_s=20, thinking_level="LOW"
+            )
+        case Purpose.LANGUAGE_WRAPUP:
+            # New words and whether the objective was met, after the conversation.
+            return ModelProfile(
+                model, location, temperature=0.3, max_output_tokens=3_000, timeout_s=90, thinking_level="LOW"
+            )
         case Purpose.RESUME_PROFILE:
             return ModelProfile(
                 model, location, temperature=0.1, max_output_tokens=4_000, timeout_s=120, thinking_level="LOW"
@@ -407,6 +475,7 @@ class ModelGateway:
         on_text: TextCallback | None = None,
         on_sources: SourcesCallback | None = None,
         on_wait: WaitCallback | None = None,
+        purpose: Purpose = Purpose.STRATEGIST_RESEARCH,
     ) -> ResearchResult:
         """Web research with Google Search grounding; returns notes plus the sources actually retrieved."""
         settings = get_settings()
@@ -429,7 +498,7 @@ class ModelGateway:
         from google.adk.tools.google_search_tool import google_search
         from google.genai import types
 
-        profile = profile_for(Purpose.STRATEGIST_RESEARCH, settings)
+        profile = profile_for(purpose, settings)
         found: dict[tuple[str, str], dict[str, str]] = {}
         queries: list[str] = []
         suggestions = {"html": ""}
@@ -520,7 +589,7 @@ class ModelGateway:
             cost = token_cost_micros(
                 usage["input"], usage["output"], settings.text_input_micros_per_m, settings.text_output_micros_per_m
             )
-            log.info("ai_usage", extra={"purpose": Purpose.STRATEGIST_RESEARCH.value, "model": profile.model,
+            log.info("ai_usage", extra={"purpose": purpose.value, "model": profile.model,
                                         "tokens": usage["total"], "inputTokens": usage["input"],
                                         "outputTokens": usage["output"], "estCostMicros": cost,
                                         "modelCalls": usage["calls"], "outcome": outcome,

@@ -11,6 +11,7 @@ describe('examiners', () => {
 
   it('gives every examiner a recording, a name and a voice', () => {
     for (const [style, person] of Object.entries(EXAMINERS)) {
+      expect(person.avatarId, style).toMatch(/^[a-z][a-z0-9_]{2,}$/)
       expect(person.name, style).toMatch(/^Prof\./)
       expect(person.voice.length, style).toBeGreaterThan(2)
     }
@@ -19,7 +20,7 @@ describe('examiners', () => {
   it('matches the faces and voices the server actually uses', () => {
     // The server picks both; a mismatch would put another person's voice on the face.
     for (const person of Object.values(EXAMINERS)) {
-      expect(backend).toContain(`Examiner("${person.name}", "${person.role}", "${person.voice}")`)
+      expect(backend).toContain(`Examiner("${person.avatarId}", "${person.name}", "${person.role}", "${person.voice}")`)
     }
   })
 

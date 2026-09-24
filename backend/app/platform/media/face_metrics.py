@@ -42,6 +42,12 @@ class FaceSecondIn(BaseModel):
     move: Fraction
     # In-person panels: share of the second turned toward whoever was speaking.
     toSpeaker: Fraction | None = None
+    # Body tracking, when the device ran it: shoulders in frame, hands in frame, hands at the
+    # head or face, and the whole body in frame (`app/platform/media/visual.py`).
+    body: Fraction | None = None
+    hands: Fraction | None = None
+    handsFace: Fraction | None = None
+    full: Fraction | None = None
 
 
 class FaceMetricsBody(BaseModel):

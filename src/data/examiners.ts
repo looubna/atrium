@@ -5,11 +5,13 @@ import type { ExamStyle } from '@/modules/exam/api'
  *
  * An oral exam is one person throughout, so there is one examiner per style: the
  * one who questions you across a desk, and the one who watches you work at the
- * board. Exams are voice only: nobody is shown on screen. Mirrors
- * `backend/app/modules/exam/examiners.py`; the two are kept in step by tests on
- * both sides.
+ * board. Their faces are recordings on our LiveTalking face server
+ * (`infra/livetalking`). Mirrors `backend/app/modules/exam/examiners.py`; the two
+ * are kept in step by tests on both sides.
  */
 export interface Examiner {
+  /** The recording on the face server (`data/avatars/<id>`). */
+  avatarId: string
   /** Shown on the name plate. */
   name: string
   role: string
@@ -23,6 +25,7 @@ export interface Examiner {
 
 export const EXAMINERS: Record<ExamStyle, Examiner> = {
   oral_questions: {
+    avatarId: 'william',
     name: 'Prof. William Okonjo',
     role: 'Examiner',
     gender: 'male',
@@ -30,6 +33,7 @@ export const EXAMINERS: Record<ExamStyle, Examiner> = {
     note: 'The senior academic across the desk who has heard every answer before.',
   },
   board_work: {
+    avatarId: 'gabriel',
     name: 'Prof. Gabriel Sartori',
     role: 'Examiner',
     gender: 'male',
@@ -37,6 +41,7 @@ export const EXAMINERS: Record<ExamStyle, Examiner> = {
     note: 'Follows a derivation line by line, which is what a board exam feels like.',
   },
   unknown: {
+    avatarId: 'william',
     name: 'Prof. William Okonjo',
     role: 'Examiner',
     gender: 'male',

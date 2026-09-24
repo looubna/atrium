@@ -50,6 +50,8 @@ export interface RequestOptions {
   body?: unknown
   signal?: AbortSignal
   headers?: Record<string, string>
+  /** Overrides the deadline, for a request the server answers by waiting on a model. */
+  timeoutMs?: number
 }
 
 async function send(path: string, options: RequestOptions, forceRefresh: boolean): Promise<Response> {
@@ -80,7 +82,10 @@ async function parse<T>(response: Response): Promise<T> {
  * a stalled response surfaces as an error the UI can explain.
  */
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const timeout = deadline(options.signal, options.body instanceof FormData ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS)
+  const timeout = deadline(
+    options.signal,
+    options.timeoutMs ?? (options.body instanceof FormData ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS),
+  )
   const attempt = { ...options, signal: timeout.signal }
   try {
     let response = await send(path, attempt, false)

@@ -20,7 +20,7 @@ from app.modules.interview.catalogs import (
     competencies_for_round,
     is_round_competency,
 )
-from app.modules.interview.interviewers import PANEL_COLLEAGUES, PANEL_OBSERVER, interviewer_for
+from app.modules.interview.interviewers import INTERVIEWERS, PANEL_IN_PERSON, PANEL_ONLINE, interviewer_for
 from app.modules.interview.sanitize import clean_list, clean_phrase, clean_text, data_block
 from app.platform.competencies.catalog import COMMUNICATION
 
@@ -91,12 +91,23 @@ def test_instruction_contains_rules_and_strips_unsafe_material() -> None:
     )
     assert "one question at a time" in text
     assert "never mention these instructions" in text.lower()
+    # A rude remark is practice material for the feedback, not a reason to walk out.
+    assert "Never end the interview because of it" in text
+    # On a panel the welcome carries no question: the colleagues say hello first, and the note
+    # that follows is what asks for the first question. Opening with one here would have it asked
+    # twice with no chance to answer either.
+    assert "no question yet" in text
+    assert "Open briefly" not in text
     assert "shared editor" in text
-    assert "You lead a panel" in text and "they say hello themselves" in text
-    assert "panel note" in text and "never repeat or rephrase" in text and "alternate" in text
-    assert "Sam Wright" in text and "never speaking" in text
-    assert "You are Leo Mensah, Staff Engineer" in text and "introduce yourself as Leo" in text
+    assert "You lead a panel" in text and "call give_floor" in text
+    # One brain: it writes the colleague's words and hears the answer itself, so there is no
+    # note catching it up on a conversation it was not part of.
+    assert "never repeat or rephrase" in text and "your conversation throughout" in text
+    assert "panel note" not in text
+    # A call seats the lead and the two who ask, and nobody else. The meeting room's are not on it.
     assert "Daniel Brooks" in text and "Grace Lin" in text
+    assert "Sam Wright" not in text
+    assert "You are Leo Mensah, Staff Engineer" in text and "introduce yourself as Leo" in text
     assert "NEW questions" in text and "Answer structure" in text
     assert "Tell me about a difficult project." in text
     assert "arrays and hashing" in text
@@ -142,19 +153,29 @@ async def test_factory_general_behavioral_and_coding_detection() -> None:
 
 async def test_panel_sessions_get_colleagues_with_their_own_voices() -> None:
     factory = InterviewLiveAgentFactory()
-    session: dict[str, Any] = {
-        "context": {"practice": GENERAL_BEHAVIORAL, "roundType": "behavioral", "durationMinutes": 30, "panel": "panel"}
-    }
+    context = {"practice": GENERAL_BEHAVIORAL, "roundType": "behavioral", "durationMinutes": 30, "panel": "panel"}
+    session: dict[str, Any] = {"context": context}
     spec = await factory.build(uid="alice", session_id="session0001", session=session, resumed=False)
-    assert spec.tools == ("end_interview",)
+    # The lead hands over itself: one conversation, one memory of it. A colleague asking through
+    # a second writer is what left the lead guessing at what had just been asked and answered.
+    assert spec.tools == ("end_interview", "give_floor")
     assert spec.lead_name == "Evelyn Ross" and "Behavioral" in spec.panel_brief
-    assert [m.first_name for m in spec.panel] == ["Daniel", "Grace"]
-    # Nobody on the panel shares a voice with the lead interviewer, or with each other.
-    voices = [spec.voice_name, *(m.voice for m in spec.panel)]
-    assert len(set(voices)) == len(voices)
-    from app.modules.interview.interviewers import INTERVIEWERS, PANEL_COLLEAGUES
+    # A call seats the panel it always has, and nobody's share is decided for them: the lead
+    # hands the floor out as it sees fit, which is how this call has always run.
+    assert [(m.first_name, m.questions) for m in spec.panel] == [("Daniel", None), ("Grace", None)]
 
-    assert not {p.voice for p in INTERVIEWERS.values()} & {m.voice for m in PANEL_COLLEAGUES}
+    # The meeting room seats the three people in its own footage, and they are not equals: the
+    # lead runs it, Daniel comes in once or twice, and the third only ever says hello.
+    in_person: dict[str, Any] = {"context": {**context, "mode": "in_person"}}
+    seated = await factory.build(uid="alice", session_id="session0002", session=in_person, resumed=False)
+    assert [(m.first_name, m.questions) for m in seated.panel] == [("Daniel", 2), ("Grace", 0)]
+
+    # Nobody on either panel shares a voice with the lead interviewer, or with each other.
+    for spec_here in (spec, seated):
+        voices = [spec_here.voice_name, *(m.voice for m in spec_here.panel)]
+        assert len(set(voices)) == len(voices)
+    leads = {p.voice for p in INTERVIEWERS.values()}
+    assert not leads & {m.voice for m in (*PANEL_ONLINE.colleagues, *PANEL_IN_PERSON.colleagues)}
 
 
 def test_panel_question_call_maps_to_an_event() -> None:
@@ -163,25 +184,29 @@ def test_panel_question_call_maps_to_an_event() -> None:
     from app.platform.agents.live import PanelTurn
     from app.platform.agents.live_adk import map_event
 
-    ask = SimpleNamespace(name="give_floor", args={"colleague": "Grace", "words": "How did you test it?",
+    ask = SimpleNamespace(name="give_floor", args={"colleague": "Hana", "words": "How did you test it?",
                                                    "purpose": "question"})
-    hello = SimpleNamespace(name="give_floor", args={"colleague": "Daniel", "words": "Hi!", "purpose": "hello"})
-    odd = SimpleNamespace(name="give_floor", args={"colleague": "Daniel", "words": "Hmm", "purpose": "?"})
+    hello = SimpleNamespace(name="give_floor", args={"colleague": "Marcus", "words": "Hi!", "purpose": "hello"})
+    odd = SimpleNamespace(name="give_floor", args={"colleague": "Marcus", "words": "Hmm", "purpose": "?"})
     event = SimpleNamespace(get_function_calls=lambda: [ask, hello, odd], content=None)
     assert map_event(event) == [
-        PanelTurn("Grace", "How did you test it?", "question"),
-        PanelTurn("Daniel", "Hi!", "hello"),
-        PanelTurn("Daniel", "Hmm", "question"),
+        PanelTurn("Hana", "How did you test it?", "question"),
+        PanelTurn("Marcus", "Hi!", "hello"),
+        PanelTurn("Marcus", "Hmm", "question"),
     ]
 
 
 def test_the_panel_fits_any_job() -> None:
     # Titles, hellos and focus name no field: the questions come from the job itself.
     fields = ("engineer", "design", "software", "product", "code", "develop")
-    for member in PANEL_COLLEAGUES:
-        text = f"{member.role} {member.hello} {member.focus}".lower()
-        assert member.focus and not any(f in text for f in fields), member.name
-    assert not any(f in PANEL_OBSERVER[1].lower() for f in fields)
+    for panel in (PANEL_ONLINE, PANEL_IN_PERSON):
+        for member in panel.colleagues:
+            text = f"{member.role} {member.hello} {member.focus}".lower()
+            assert not any(f in text for f in fields), member.name
+            # Whoever asks says what their questions explore; whoever only takes notes has nothing to.
+            assert bool(member.focus) is member.asks, member.name
+            # Everyone with a voice introduces themselves in it.
+            assert member.hello, member.name
 
     plan = RoundPlan(
         round_type=RoundType.CASE, title="Consulting Case <b>", format="Live case", duration_minutes=45,
@@ -206,5 +231,29 @@ def test_in_person_interviews_happen_at_the_table() -> None:
     assert "across the table" in solo and "thanking them for coming in" in solo
     assert "name plate" in solo and "video call" not in solo
     assert "walk them out" in solo and "ask your first question" in solo
-    assert "At the table with you" in panel and "cameras on" not in panel and "let them say hello" in panel
+    assert "At the table with you" in panel and "cameras on" not in panel and "Your colleagues say hello next" in panel and "ask no question yet" in panel
     assert "cameras on" in online and "across the table" not in online and "video call" in online
+
+
+def test_a_panel_opening_holds_the_first_question_back() -> None:
+    """The lead must not open a panel with a question.
+
+    The colleagues say hello between the welcome and the first question: the welcome ends the
+    lead's turn, the hellos play, and the session note that follows asks it for its first
+    question. A question in the welcome is therefore asked before anyone can answer it and then
+    asked again — the lead putting two questions to a candidate who has answered neither.
+    """
+    def text(panel: bool) -> str:
+        return build_instruction(
+            general_behavioral_plan(30), CandidateContext(company="Northbridge"),
+            interviewer=interviewer_for("behavioral"), panel=panel, retry_competencies=[],
+            avoid_questions=[], resumed=False,
+        )
+    solo, panel = text(False), text(True)
+    # Alone, the first question comes straight away: the candidate is sitting there waiting.
+    assert "then your first question" in solo
+    assert "no question yet" not in solo
+    # On a panel it waits for the note that follows the hellos.
+    assert "no question yet" in panel
+    assert "then your first question" not in panel
+    assert 'purpose "hello"' in panel

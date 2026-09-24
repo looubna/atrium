@@ -1,14 +1,26 @@
-import type { FaceLandmarker } from '@mediapipe/tasks-vision'
+import type { FaceLandmarker, NormalizedLandmark, PoseLandmarker } from '@mediapipe/tasks-vision'
 
 /**
- * On-device face measurements during an interview: whether the candidate looks
- * at the camera, smiles, and how much their head moves. Frames are analysed on
- * the device and discarded; only per-second numbers are kept and uploaded.
+ * On-device face and body measurements during an interview: whether the candidate looks
+ * at the camera, smiles, and how much their head moves — and, with body tracking, whether
+ * their shoulders, hands and whole body are in frame and whether their hands are up at their
+ * head or face. Frames are analysed on the device and discarded; only per-second numbers are
+ * kept and uploaded.
+ *
+ * The body half exists because a face tracker cannot see hands: someone holding their head
+ * through a whole interview measured as perfectly calm.
  */
 
 /** Served by the app itself (see vite.config.ts), so it works offline and inside the iOS app. */
 const WASM_BASE = '/models/mediapipe/wasm'
 const MODEL_PATH = '/models/mediapipe/face_landmarker.task'
+const POSE_MODEL_PATH = '/models/mediapipe/pose_landmarker_lite.task'
+/** Body tracking runs on every other face sample: posture changes slowly, and it costs more. */
+const POSE_EVERY = 2
+/** A landmark counts as in frame above this visibility, and inside the image. */
+const VISIBLE = 0.5
+/** A wrist closer to the nose than this many shoulder-widths is up at the head or face. */
+const HAND_AT_FACE_SHOULDERS = 0.9
 const SAMPLES_PER_SECOND = 4
 /** Head turned or tilted further than this (degrees) is not looking at the camera. */
 const LOOK_AWAY_DEGREES = 15
@@ -20,6 +32,14 @@ const SCREEN_DEGREES = 25
 const SEAT_YAW_DEGREES = 8
 /** Head rotation faster than this (degrees per second) counts as restless movement. */
 const RESTLESS_DEGREES_PER_SECOND = 25
+/**
+ * Below this average brightness (0-255) the face is too dark for its eyes to be read. The tracker
+ * still finds a dim face, but its eye-direction scores then sit near zero — which reads as "looking
+ * at the camera". So in the dark the eyes are not judged at all, and nobody scores well by default.
+ */
+export const DARK_LUMA = 50
+/** The frame is shrunk to this width to measure brightness: plenty for an average, and cheap. */
+const LUMA_WIDTH = 64
 
 /** One second of the interview, as fractions of that second's samples. */
 export interface FaceSecond {
@@ -27,15 +47,35 @@ export interface FaceSecond {
   t: number
   /** A face was found. */
   present: number
-  /** Looking at the camera, while present. */
+  /** Looking at the camera, among the samples where the face was clear enough to judge. */
   eye: number
+  /**
+   * The picture was clear enough to judge: the face, when one was found, or else the whole frame,
+   * was bright enough. Low means too dark: an absent face or unread eyes say nothing then.
+   */
+  clear?: number
   /** Average smile strength (0..1), while present. */
   smile: number
   /** Restless head movement, while present. */
   move: number
   /** In-person panels: turned toward the seat of whoever was speaking, while present. */
   toSpeaker?: number
+  /** Body tracking, when it could run: shoulders in frame. */
+  body?: number
+  /** Body tracking: at least one hand in frame. */
+  hands?: number
+  /** Body tracking: a hand up at the head or face. */
+  handsFace?: number
+  /** Body tracking: hips and feet in frame too. */
+  full?: number
 }
+
+/**
+ * What is wrong with how the candidate sits in the frame right now, if anything.
+ * `too_close`: only the face shows, so posture and hands cannot be judged.
+ * `step_back`: a setting judged on the whole body (presenting, a defence) sees only part of it.
+ */
+export type Framing = 'no_face' | 'too_close' | 'step_back'
 
 /** Where a speaker sits on screen, from the candidate's point of view. */
 export type Seat = -1 | 0 | 1
@@ -45,6 +85,8 @@ export interface FaceTrackerOptions {
   setting?: 'camera' | 'screen'
   /** The seat of whoever is speaking right now, or null when nobody is. */
   speakerSeat?: () => Seat | null
+  /** Judged on the whole body (presenting, a thesis defence): the framing check asks for all of it. */
+  fullBody?: boolean
 }
 
 export interface HeadAngles {
@@ -115,15 +157,93 @@ function loadLandmarker(): Promise<FaceLandmarker> {
   return landmarker
 }
 
+let poseLandmarker: Promise<PoseLandmarker> | null = null
+
+function loadPose(): Promise<PoseLandmarker> {
+  poseLandmarker ??= (async () => {
+    const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision')
+    const fileset = await FilesetResolver.forVisionTasks(WASM_BASE)
+    const options = (delegate: 'GPU' | 'CPU') => ({
+      baseOptions: { modelAssetPath: POSE_MODEL_PATH, delegate },
+      runningMode: 'VIDEO' as const,
+      numPoses: 1,
+    })
+    try {
+      return await PoseLandmarker.createFromOptions(fileset, options('GPU'))
+    } catch {
+      return PoseLandmarker.createFromOptions(fileset, options('CPU'))
+    }
+  })()
+  poseLandmarker.catch(() => {
+    poseLandmarker = null
+  })
+  return poseLandmarker
+}
+
+/** What one body-tracking sample saw. */
+export interface BodySample {
+  body: boolean
+  hands: boolean
+  handsFace: boolean
+  full: boolean
+}
+
+/**
+ * Reads a pose (MediaPipe's 33 landmarks, normalised to the image) into what matters for body
+ * language. `aspect` is the image's width over its height, so distances are measured square.
+ */
+export function readPose(landmarks: NormalizedLandmark[], aspect: number): BodySample {
+  const seen = (i: number) => {
+    const l = landmarks[i]
+    return Boolean(l) && (l.visibility ?? 0) > VISIBLE && l.x >= 0 && l.x <= 1 && l.y >= 0 && l.y <= 1
+  }
+  const distance = (a: number, b: number) =>
+    Math.hypot((landmarks[a].x - landmarks[b].x) * aspect, landmarks[a].y - landmarks[b].y)
+  const body = seen(11) && seen(12)
+  const wrists = [15, 16].filter(seen)
+  // Shoulder width sizes "near the face" to this person at this distance; without the shoulders,
+  // a quarter of the image height stands in for it.
+  const reach = body ? distance(11, 12) * HAND_AT_FACE_SHOULDERS : 0.25
+  return {
+    body,
+    hands: wrists.length > 0,
+    handsFace: seen(0) && wrists.some((w) => distance(w, 0) < reach),
+    full: seen(23) && seen(24) && (seen(27) || seen(28)),
+  }
+}
+
+/** The framing problem in a run of recent samples, if one holds for most of it. */
+export function framingOf(
+  faces: boolean[],
+  bodies: BodySample[],
+  fullBody: boolean,
+): Framing | null {
+  if (faces.length >= 4 && faces.filter(Boolean).length < faces.length / 2) return 'no_face'
+  if (bodies.length < 3) return null
+  const most = (pick: (b: BodySample) => boolean) => bodies.filter(pick).length >= bodies.length / 2
+  if (!most((b) => b.body)) return 'too_close'
+  if (fullBody && !most((b) => b.full)) return 'step_back'
+  return null
+}
+
 interface Bucket {
   samples: number
   present: number
+  /** Samples bright enough to judge, and among them those with the face present (the eye samples). */
+  clear: number
+  judged: number
   eye: number
   smile: number
   move: number
   /** Samples taken while someone was speaking, and how many faced their seat. */
   spoken: number
   toSpeaker: number
+  /** Body-tracking samples, and how many saw each thing. */
+  poses: number
+  body: number
+  hands: number
+  handsFace: number
+  full: number
 }
 
 const round2 = (value: number) => Math.round(value * 100) / 100
@@ -136,6 +256,19 @@ export class FaceTracker {
   private stopped = false
   /** The most recent samples, for live feedback during a drill. */
   private readonly recent: { present: boolean; eye: boolean; smile: number }[] = []
+  /** The last few seconds of body tracking, for the framing check. */
+  private readonly recentBodies: BodySample[] = []
+  private pose: PoseLandmarker | null = null
+  private samples = 0
+
+  /** What is wrong with the framing right now, if anything; null when it is fine or unknown. */
+  framing(): Framing | null {
+    return framingOf(
+      this.recent.map((s) => s.present),
+      this.recentBodies,
+      Boolean(this.options.fullBody),
+    )
+  }
 
   /** Over roughly the last two seconds: is a face visible, the share looking at the camera, and smile strength. */
   live(): { present: boolean; eye: number; smile: number } | null {
@@ -167,6 +300,12 @@ export class FaceTracker {
       await video.play()
       this.video = video
       this.timer = window.setInterval(() => this.sample(detector), 1000 / SAMPLES_PER_SECOND)
+      // Body tracking is extra: where it cannot run, the face measurements carry on without it.
+      void loadPose()
+        .then((pose) => {
+          if (!this.stopped) this.pose = pose
+        })
+        .catch(() => {})
       return true
     } catch {
       return false
@@ -184,8 +323,13 @@ export class FaceTracker {
       return
     }
     const second = Math.floor(this.mediaMs() / 1000)
-    const bucket = this.buckets.get(second) ?? { samples: 0, present: 0, eye: 0, smile: 0, move: 0, spoken: 0, toSpeaker: 0 }
+    const bucket = this.buckets.get(second) ?? {
+      samples: 0, present: 0, clear: 0, judged: 0, eye: 0, smile: 0, move: 0, spoken: 0, toSpeaker: 0,
+      poses: 0, body: 0, hands: 0, handsFace: 0, full: 0,
+    }
     bucket.samples += 1
+    this.samples += 1
+    if (this.pose && this.samples % POSE_EVERY === 0) this.samplePose(this.pose, video, now, bucket)
 
     const matrix = result.facialTransformationMatrixes?.[0]?.data
     const shapes = result.faceBlendshapes?.[0]?.categories
@@ -201,9 +345,15 @@ export class FaceTracker {
       }
       const smile = ((blend.mouthSmileLeft ?? 0) + (blend.mouthSmileRight ?? 0)) / 2
       bucket.present += 1
-      if (looking) bucket.eye += 1
+      // The eyes are judged only on a face lit well enough to see them.
+      const lit = this.brightness(video, result.faceLandmarks?.[0]) >= DARK_LUMA
+      if (lit) {
+        bucket.clear += 1
+        bucket.judged += 1
+        if (looking) bucket.eye += 1
+      }
       bucket.smile += smile
-      this.remember({ present: true, eye: looking, smile })
+      this.remember({ present: true, eye: lit && looking, smile })
       if (this.last) {
         const seconds = Math.max(0.05, (now - this.last.at) / 1000)
         const speed = Math.hypot(angles.yaw - this.last.yaw, angles.pitch - this.last.pitch) / seconds
@@ -212,9 +362,69 @@ export class FaceTracker {
       this.last = { ...angles, at: now }
     } else {
       this.last = null
+      // No face: in a lit room that is the candidate out of frame; in the dark, nothing can be told.
+      if (this.brightness(video) >= DARK_LUMA) bucket.clear += 1
       this.remember({ present: false, eye: false, smile: 0 })
     }
     this.buckets.set(second, bucket)
+  }
+
+  private samplePose(pose: PoseLandmarker, video: HTMLVideoElement, now: number, bucket: Bucket): void {
+    let landmarks: NormalizedLandmark[] | undefined
+    try {
+      landmarks = pose.detectForVideo(video, now).landmarks?.[0]
+    } catch {
+      return
+    }
+    const seen = landmarks
+      ? readPose(landmarks, video.videoWidth / Math.max(1, video.videoHeight))
+      : { body: false, hands: false, handsFace: false, full: false }
+    bucket.poses += 1
+    if (seen.body) bucket.body += 1
+    if (seen.hands) bucket.hands += 1
+    if (seen.handsFace) bucket.handsFace += 1
+    if (seen.full) bucket.full += 1
+    this.recentBodies.push(seen)
+    // About three seconds: long enough that a passing gesture does not raise a warning.
+    if (this.recentBodies.length > Math.ceil((3 * SAMPLES_PER_SECOND) / POSE_EVERY)) this.recentBodies.shift()
+  }
+
+  private lumaCanvas: HTMLCanvasElement | null = null
+
+  /**
+   * Average brightness (0-255) of the face — the box around its landmarks — or of the whole frame.
+   * Measured on a tiny copy of the frame, on the device, and discarded like everything else.
+   */
+  private brightness(video: HTMLVideoElement, face?: NormalizedLandmark[]): number {
+    const w = LUMA_WIDTH
+    const h = Math.max(1, Math.round((w * video.videoHeight) / Math.max(1, video.videoWidth)))
+    this.lumaCanvas ??= document.createElement('canvas')
+    const canvas = this.lumaCanvas
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return 255
+    try {
+      context.drawImage(video, 0, 0, w, h)
+    } catch {
+      return 255
+    }
+    let [x0, y0, x1, y1] = [0, 0, w, h]
+    if (face?.length) {
+      const xs = face.map((l) => l.x)
+      const ys = face.map((l) => l.y)
+      x0 = Math.max(0, Math.floor(Math.min(...xs) * w))
+      y0 = Math.max(0, Math.floor(Math.min(...ys) * h))
+      x1 = Math.min(w, Math.ceil(Math.max(...xs) * w))
+      y1 = Math.min(h, Math.ceil(Math.max(...ys) * h))
+      if (x1 - x0 < 2 || y1 - y0 < 2) [x0, y0, x1, y1] = [0, 0, w, h]
+    }
+    const { data } = context.getImageData(x0, y0, x1 - x0, y1 - y0)
+    let sum = 0
+    for (let i = 0; i < data.length; i += 4) sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+    return data.length ? sum / (data.length / 4) : 255
   }
 
   private remember(sample: { present: boolean; eye: boolean; smile: number }): void {
@@ -236,10 +446,19 @@ export class FaceTracker {
       .map(([t, b]) => ({
         t,
         present: round2(b.present / b.samples),
-        eye: b.present ? round2(b.eye / b.present) : 0,
+        eye: b.judged ? round2(b.eye / b.judged) : 0,
+        clear: round2(b.clear / b.samples),
         smile: b.present ? round2(b.smile / b.present) : 0,
         move: b.present ? round2(b.move / b.present) : 0,
         ...(this.options.speakerSeat && b.spoken ? { toSpeaker: round2(b.toSpeaker / b.spoken) } : {}),
+        ...(b.poses
+          ? {
+              body: round2(b.body / b.poses),
+              hands: round2(b.hands / b.poses),
+              handsFace: round2(b.handsFace / b.poses),
+              full: round2(b.full / b.poses),
+            }
+          : {}),
       }))
   }
 }

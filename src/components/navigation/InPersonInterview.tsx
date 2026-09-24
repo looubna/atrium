@@ -1,28 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { interviewerFor } from '@/data/interviewers'
-import { ARRIVAL, RECEPTION_STILL, ROOM_PHOTO, type Orientation } from '@/data/inPersonMedia'
+import { PANEL_IN_PERSON, leadFor } from '@/data/interviewers'
+import { ARRIVAL, ONE_FACE_ROOM, PANEL_FACE_ROOM, RECEPTION_STILL, ROOM_PHOTO, ROOM_TAKES, type Orientation } from '@/data/inPersonMedia'
 import type { SessionSetup } from '@/data/practice'
 import { useCamera } from '@/lib/useCamera'
 import { cn } from '@/lib/utils'
 import { CodePane } from '@/modules/interview/live/CodePane'
-import { CUT_BACK_MS, type Speaker } from '@/modules/interview/live/shots'
+import { CUT_BACK_MS, takeFor, type Speaker } from '@/modules/interview/live/shots'
 import { useInterviewRoom } from '@/modules/interview/live/useInterviewRoom'
 import type { LiveInterviewControls } from '@/modules/interview/live/useLiveInterview'
 import { isLiveInPerson, useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
 import { IconCode } from '../ui/Icon'
 import { LeaveArrow, LiveOverlay, SceneCaption } from './LivePanels'
+import { AvatarTile } from './AvatarTile'
+import { FramingHint } from './FramingHint'
+import { RoomTake } from './RoomTake'
 
 /**
  * A live interview in person, the way a visit goes: the firm's glass doors, a tap of the pass,
  * the walk in, the receptionist's welcome while the interviewer comes down, then the meeting
- * room from the candidate's chair. Nobody is shown on screen: the interview is voice only, over
- * the photographed room, with a caption naming whoever is speaking.
+ * room from the candidate's chair, where the camera stays for the whole interview.
+ *
+ * The room is the picture, and nothing is ever drawn over it. It is filmed once per speaker on
+ * the same locked-off frame — everyone listening, the lead talking, a colleague talking — and the
+ * take running is the one whose person has the floor, with their name under the frame. Every take
+ * starts and ends on the photograph, so the change is invisible.
  * Nothing on screen but a way out: no call controls, timers or meters.
  */
 
 /** A beat after the welcome and the interviewer's arrival before walking to the room. */
 const TAKE_SEAT_DELAY_MS = 1200
+
+/** How long a new face's name and role stay on screen, the way a call tile carries them. */
+const NAME_PLATE_MS = 4000
 
 type Arrival = 'door' | 'walking' | 'greeting' | 'waiting'
 
@@ -37,26 +47,17 @@ function useOrientation(): Orientation {
   return orientation
 }
 
-/** Resolves once the candidate is seated in the meeting room. */
-function useSeatedGate(seated: boolean) {
-  const seatedRef = useRef(seated)
-  seatedRef.current = seated
-  const waiters = useRef<(() => void)[]>([])
-  useEffect(() => {
-    if (seated) waiters.current.splice(0).forEach((release) => release())
-  }, [seated])
-  return useCallback(
-    () => (seatedRef.current ? Promise.resolve() : new Promise<void>((resolve) => waiters.current.push(resolve))),
-    [],
-  )
-}
-
-/** Who is talking now, held briefly after they stop. */
+/**
+ * Whose voice is audible now, held briefly after they stop.
+ *
+ * On the voice actually playing, never on a turn merely queued: the room films one person per
+ * speaker, so being a beat early means the wrong mouth moves.
+ */
 function useSpeaker(live: LiveInterviewControls): Speaker {
-  const { interviewerSpeaking, panelSpeaker } = live.state
+  const { leadVoicing, panelSpeaker } = live.state
   const now: Speaker = panelSpeaker
     ? { kind: 'colleague', name: panelSpeaker }
-    : interviewerSpeaking
+    : leadVoicing
       ? { kind: 'lead' }
       : null
   const key = now ? (now.kind === 'lead' ? 'lead' : now.name) : ''
@@ -114,14 +115,24 @@ export function InPersonRoom({
   const seated = zone === 'meeting'
   const interview = session.interview!
   const panel = interview.panel === 'panel'
-  const lead = interviewerFor(interview.roundType)
-  const roomPhoto = ROOM_PHOTO[panel ? 'panel' : 'one'][orientation]
+  // Always the room's own interviewer: the candidate can see whose chair it is.
+  const lead = leadFor(interview.roundType, true)
+  // Everyone else at the table, whether or not they ever ask anything: the one who sits in and
+  // takes notes still says hello, and is still named the first time the candidate hears her.
+  const table = panel ? PANEL_IN_PERSON : []
+  const layout = panel ? 'panel' : 'one'
+  const roomPhoto = ROOM_PHOTO[layout][orientation]
+  const takes = ROOM_TAKES[layout][orientation]
   const arrivalMedia = ARRIVAL[orientation]
+  // Takes that turned out not to be filmed: each falls back to the room listening, and that to
+  // the photograph, so a room with no footage at all still works.
+  const [missing, setMissing] = useState<string[]>([])
+  const filmed = useCallback((src: string) => !missing.includes(src), [missing])
+  const onMissing = useCallback((src: string) => setMissing((gone) => (gone.includes(src) ? gone : [...gone, src])), [])
 
   // From the pass on, the camera measures presence on the device (the browser shows it's on).
   const [started, setStarted] = useState(false)
   const camera = useCamera(started)
-  const beforeConnect = useSeatedGate(seated)
   const speakerRef = useRef<Speaker>(null)
   const tracker = useMemo(
     () => ({
@@ -132,9 +143,24 @@ export function InPersonRoom({
     // The panel doesn't change within an interview.
     [panel],
   )
-  const room = useInterviewRoom({ sessionId, camera: camera.stream, beforeConnect, tracker })
-  const { live, liveActive } = room
+  // The call connects on the way in; the interviewer opens the moment the candidate sits down.
+  // The interviewers are live, lip-synced faces: one to one, Evelyn at her desk; as a panel, the
+  // three of them at the table, one face that paints whoever is speaking.
+  const room = useInterviewRoom({ sessionId, camera: camera.stream, openWhen: seated, tracker })
+  const { live, liveActive, avatar } = room
+  // Their room and their faces, unless there is no face today: then the filmed room, voice only.
+  const faceRoom = !room.avatarUnavailable && !room.avatarFailed
+  const faceMedia = panel ? PANEL_FACE_ROOM : ONE_FACE_ROOM
+  // At the table the colleagues speak through the same face as the lead, each under their own name.
+  const { leadFaceLive, colleagueLive } = room
+  useEffect(() => {
+    if (!leadFaceLive || !avatar) return
+    for (const [name, renderer] of Object.entries(avatar.panel)) colleagueLive(name, renderer)
+  }, [leadFaceLive, avatar, colleagueLive])
   const { phase } = live.state
+  // Nobody's face has to join any more, so what the candidate waits for at reception is the
+  // interview itself being connected — the same beat, now measuring something real.
+  const arrived = phase === 'live' || phase === 'reconnecting'
   useEffect(() => {
     if (phase !== 'idle' && phase !== 'starting') setStarted(true)
   }, [phase])
@@ -142,19 +168,39 @@ export function InPersonRoom({
   // Arriving: the door, the walk in, the welcome, then waiting for the interviewer.
   const [arrival, setArrival] = useState<Arrival>(zone === 'door' ? 'door' : 'waiting')
   const scan = () => {
+    if (arrival !== 'door') return  // a second tap must not open a second session
     // The tap on the reader is also what lets the microphone open and the welcome be heard.
     void live.start()
     scanPass()
     setArrival('walking')
   }
   useEffect(() => {
-    if (zone !== 'reception' || arrival !== 'waiting') return
+    if (zone !== 'reception' || arrival !== 'waiting' || !arrived) return
     const timer = window.setTimeout(takeSeat, TAKE_SEAT_DELAY_MS)
     return () => window.clearTimeout(timer)
-  }, [zone, arrival, takeSeat])
+  }, [zone, arrival, arrived, takeSeat])
 
   const speaker = useSpeaker(live)
   speakerRef.current = speaker
+  // Everyone in the room, the lead first: one shape, so a cut, a still and a name plate never
+  // have to ask which kind of person they are looking at.
+  const cast = [
+    { key: 'lead', name: lead.name, role: lead.role },
+    ...table.map((m) => ({ key: m.name, name: m.name, role: m.role })),
+  ]
+  // Who is talking, if anyone: theirs is the take that runs.
+  const onScreen = speaker?.kind === 'colleague' ? speaker.name : speaker?.kind === 'lead' ? 'lead' : null
+  // Everyone is in the room from the moment the candidate sits down, so each is named the first
+  // time they speak, and after that they are simply someone the candidate has met.
+  const [met, setMet] = useState<string[]>([])
+  const introducing =
+    seated && liveActive && onScreen && !met.includes(onScreen) ? cast.find((p) => p.key === onScreen) : undefined
+  const introducingKey = introducing?.key
+  useEffect(() => {
+    if (!introducingKey) return
+    const timer = window.setTimeout(() => setMet((names) => [...names, introducingKey]), NAME_PLATE_MS)
+    return () => window.clearTimeout(timer)
+  }, [introducingKey])
   const coding = liveActive && live.state.coding
   const [boardOpen, setBoardOpen] = useState(false)
 
@@ -164,9 +210,14 @@ export function InPersonRoom({
     return () => setSceneCovered(false)
   }, [setSceneCovered])
 
-  // Nobody is on screen, so the room always says who is talking.
-  const faceless =
-    speaker?.kind === 'lead' ? lead.name : speaker?.kind === 'colleague' ? speaker.name : null
+  // Which take is running, and whose name goes under it. Three people at a table are three
+  // strangers until they are named, and the candidate is too far away to read a name plate.
+  const take = takeFor(speaker, table.map((m) => m.name))
+  const wanted =
+    take.kind === 'lead' ? takes.lead : take.kind === 'colleague' ? takes.colleagues[take.index] : takes.listen
+  // A take nobody filmed leaves the room listening rather than moving the wrong mouth.
+  const running = wanted && filmed(wanted) ? wanted : takes.listen
+  const speaking = speaker?.kind === 'lead' ? lead.name : speaker?.kind === 'colleague' ? speaker.name : null
   const leadFirst = lead.name.split(' ')[0]
   const leave = seated && liveActive ? live.end : leaveInterior
 
@@ -202,6 +253,17 @@ export function InPersonRoom({
               className="absolute inset-0 size-full object-cover"
             />
           )}
+          {(arrival === 'walking' || arrival === 'greeting') && (
+            <div className="absolute right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+1.5rem)] z-10">
+              <button
+                type="button"
+                onClick={() => setArrival('waiting')}
+                className="rounded-full border border-white/25 bg-black/45 px-4 py-2 text-[12.5px] font-medium text-white/85 backdrop-blur-sm transition-colors hover:bg-black/65"
+              >
+                Skip
+              </button>
+            </div>
+          )}
           {arrival === 'door' && (
             <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+1.5rem)] z-10 flex justify-center px-4">
               <button
@@ -215,19 +277,63 @@ export function InPersonRoom({
           )}
           {arrival === 'waiting' && phase !== 'failed' && (
             <SceneCaption>
-              {`${leadFirst} is here. Follow them to the meeting room.`}
+              {arrived ? `${leadFirst} is here. Follow them to the meeting room.` : `${leadFirst} is on the way down…`}
             </SceneCaption>
           )}
         </div>
       )}
 
-      {/* The meeting room. Faces stay mounted from the pass on, so seating them never restarts a stream. */}
+      {/* The meeting room. The takes stay mounted from the pass on, so changing between them
+          is a change of which is showing rather than a clip being fetched. */}
       <div
         className={cn('absolute inset-0 overflow-hidden', seated ? 'opacity-100' : 'pointer-events-none opacity-0')}
       >
         <div className="absolute inset-0 bg-[#0b0d12]" />
-        <img src={roomPhoto} alt="" className="absolute inset-0 size-full object-cover" />
-        {seated && faceless && <SceneCaption>{`${faceless.split(' ')[0]} is speaking`}</SceneCaption>}
+        {/* The room from the candidate's chair: the photograph, and over it the one take whose
+            person has the floor. Every take is that same frame, so there is no cut to see and
+            nothing is drawn into the picture that was not filmed in it. */}
+        {faceRoom ? (
+          <>
+            <img src={faceMedia.still} alt="" className="absolute inset-0 size-full object-cover" />
+            <video
+              src={faceMedia.loop}
+              poster={faceMedia.still}
+              autoPlay
+              loop
+              muted
+              playsInline
+              disablePictureInPicture
+              className="absolute inset-0 size-full object-cover"
+            />
+            {avatar && (
+              <AvatarTile
+                variant="closeup"
+                renderer={avatar.renderer}
+                name={avatar.name}
+                role={avatar.role}
+                speaking={live.state.interviewerSpeaking}
+                shown
+                onLive={room.setFaceOnScreen}
+                onFailed={room.onAvatarFailed}
+                onEnded={room.onFaceEnded}
+              />
+            )}
+          </>
+        ) : (
+          <>
+            <img src={roomPhoto} alt="" className="absolute inset-0 size-full object-cover" />
+            {[takes.listen, takes.lead, ...takes.colleagues].filter(filmed).map((src) => (
+              <RoomTake key={src} src={src} poster={roomPhoto} running={src === running} onMissing={onMissing} />
+            ))}
+          </>
+        )}
+        {introducing && (
+          <div className="anim-fade pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/70 to-transparent px-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] pt-10">
+            <div className="text-[13px] font-semibold text-chalk">{introducing.name}</div>
+            <div className="text-[11.5px] text-mist">{introducing.role}</div>
+          </div>
+        )}
+        {seated && speaking && !introducing && !(faceRoom && room.leadFaceLive) && <SceneCaption>{`${speaking.split(' ')[0]} is speaking`}</SceneCaption>}
         {seated && coding && boardOpen && (
           <div className="absolute inset-x-3 bottom-20 top-16 z-10 flex sm:inset-x-8">
             <CodePane live={live} />
@@ -257,6 +363,8 @@ export function InPersonRoom({
         </div>
       )}
 
+      <FramingHint framing={room.framing} />
+
       {(seated || phase === 'failed') && (
         <LiveOverlay
           live={live}
@@ -270,4 +378,3 @@ export function InPersonRoom({
     </div>
   )
 }
-

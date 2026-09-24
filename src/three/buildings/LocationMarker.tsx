@@ -4,6 +4,7 @@ import { type Camera, type Object3D, Vector3 } from 'three'
 import {
   IconBriefcase,
   IconBus,
+  IconChat,
   IconCoffee,
   IconDining,
   IconGraduationCap,
@@ -32,6 +33,7 @@ const GLYPHS: Record<PlaceIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
   tree: IconTree,
   coffee: IconCoffee,
   shopping: IconShoppingBag,
+  language: IconChat,
   target: IconTarget,
   bus: IconBus,
 }
@@ -66,7 +68,8 @@ export function LocationMarker({ location, emphasis }: Props) {
       position={[0, location.labelHeight, 0]}
       calculatePosition={calculatePosition}
       center
-      zIndexRange={[40, 0]}
+      // Under the HUD (z-30): a place's name floats over the city, never over the panel open about it.
+      zIndexRange={[25, 0]}
       style={{ pointerEvents: 'none' }}
       wrapperClass="pointer-events-none"
     >

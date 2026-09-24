@@ -57,6 +57,18 @@ class StoragePaths:
     def material_text(self, course_id: str, material_id: str) -> str:
         return f"{self.material_prefix(course_id, material_id)}extracted.txt"
 
+    def admission_prefix(self, prep_id: str) -> str:
+        return f"{self.user_prefix()}admission/{require_id(prep_id)}/"
+
+    def admission_material_prefix(self, prep_id: str, material_id: str) -> str:
+        return f"{self.admission_prefix(prep_id)}materials/{require_id(material_id)}/"
+
+    def admission_material(self, prep_id: str, material_id: str) -> str:
+        return f"{self.admission_material_prefix(prep_id, material_id)}original"
+
+    def admission_material_text(self, prep_id: str, material_id: str) -> str:
+        return f"{self.admission_material_prefix(prep_id, material_id)}extracted.txt"
+
     def debate_prefix(self, debate_id: str) -> str:
         return f"{self.user_prefix()}debates/{require_id(debate_id)}/"
 
@@ -94,6 +106,14 @@ class StoragePaths:
         if voice not in ("warm", "deep") or ext not in ("mp3", "wav"):
             raise ValueError("invalid example audio")
         return f"{self.session_prefix(session_id)}examples/{require_id(run_id)}-{require_id(event_id)}-{voice}.{ext}"
+
+    def board_prefix(self, session_id: str) -> str:
+        return f"{self.session_prefix(session_id)}board/"
+
+    def board_image(self, session_id: str, index: int) -> str:
+        if index < 0 or index > 9999:
+            raise ValueError("board image index out of range")
+        return f"{self.board_prefix(session_id)}{index:04d}.jpg"
 
     def face_metrics(self, session_id: str) -> str:
         return f"{self.session_prefix(session_id)}face-metrics.json"

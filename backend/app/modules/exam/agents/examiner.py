@@ -16,7 +16,7 @@ from app.core.errors import NotFound
 from app.modules.exam.catalogs import ExamStyle, competencies_for_style, parse_style
 from app.modules.exam.examiners import Examiner, examiner_for
 from app.modules.interview.sanitize import clean_list, clean_phrase, clean_text, data_block
-from app.platform.agents.live import LiveAgentSpec
+from app.platform.agents.live import LiveAgentSpec, ToolName
 from app.platform.clients import clients
 from app.platform.firestore.paths import UserPaths
 
@@ -97,10 +97,16 @@ def build_instruction(
             "",
             "Setting: this is a board exam. The student stands at a board (you receive what they write as "
             "snapshots marked as the student's board) and works problems while you watch.",
-            "- Set one concrete problem at a time, spoken out loud and short enough to write down. Ask the "
-            "student to work it on the board and to think aloud as they go.",
-            "- Read each board snapshot as it arrives and follow the working. Ask about specific steps: why that "
-            "method, what that symbol stands for, what happens to that term.",
+            "- Set one concrete problem at a time. Say it out loud AND call write_on_board with it, so the "
+            "student can read it: the statement, every number with its units, and any equation or data they "
+            "need. Nobody can work from numbers heard once. Keep what you write to the few lines you would "
+            "really put on a board.",
+            "- Write on the board again whenever you give a further number, correct a value, or add a second "
+            "part to the question. Do not write your conversational remarks there.",
+            "- The student writes on the board by hand and you receive pictures of it as they work, along with "
+            "anything they type. Read their working from those and question specific steps.",
+            "- Follow the working as it appears. Ask about specific steps: why that method, what that symbol "
+            "stands for, what happens to that term.",
             "- When the student is stuck, ask a question that unlocks the next step rather than giving the step. "
             "Give a direct hint only after they have genuinely tried.",
             "- When a step is wrong, do not correct it immediately: ask them to check it, or ask what the units, "
@@ -111,7 +117,15 @@ def build_instruction(
         lines += [
             "",
             "Setting: you are sitting across a desk from the student in your office; they are sitting opposite "
-            "you. Never mention a call, a screen, cameras or connections.",
+            "you, and a whiteboard stands beside the desk where you both can see it. Never mention a call, a "
+            "screen, cameras or connections.",
+            "- Ask most questions out loud, as a conversation. When a question needs a calculation, a derivation, "
+            "data to work from, or several steps of reasoning, say it AND call write_on_board with it: the "
+            "statement, every number with its units, and any equation they need. Then invite the student to work "
+            "it on the board. Never write your conversational remarks or definitions-only questions there.",
+            "- The student can write on the board by hand or type on it; you receive pictures of it and the typed "
+            "text as they work. Read their working from those and question specific steps, as you would at a "
+            "real board.",
         ]
     lines += ["", "Topics this exam covers, with the weight the material gives them (internal):"]
     lines += _topic_lines(plan.topics) or ["- Whatever the subject's core material covers."]
@@ -154,19 +168,18 @@ def build_instruction(
     if resumed:
         lines += ["", "The connection dropped mid-exam. Continue from where you left off; do not introduce "
                   "yourself again."]
-    elif board:
-        lines += ["", f"Start by greeting the student and introducing yourself as {examiner.name}, say in one "
-                  "sentence how the exam will work, then give them their first problem."]
     else:
-        lines += ["", f"Start by greeting the student and introducing yourself as {examiner.name}, say in one "
-                  "sentence how the exam will work, then ask your first question."]
+        first = "give them their first problem" if board else "ask your first question"
+        lines += ["", f"Start at once: one short sentence of greeting introducing yourself as {examiner.name}, then "
+                  f"{first} in the same turn. No description of the format, and never ask whether the student is "
+                  "ready: they are sitting in front of you waiting for the first question."]
     return "\n".join(line for line in lines if line is not None)
 
 
 class ExamLiveAgentFactory:
     def is_coding_session(self, session: dict[str, Any]) -> bool:
-        """Board exams have a writing surface, so the gateway accepts its snapshots."""
-        return parse_style((session.get("context") or {}).get("examStyle")) is ExamStyle.BOARD_WORK
+        """Every exam has a board beside the desk, so the gateway accepts what the student writes on it."""
+        return True
 
     async def build(self, *, uid: str, session_id: str, session: dict[str, Any], resumed: bool) -> LiveAgentSpec:
         context = session.get("context") or {}
@@ -184,9 +197,14 @@ class ExamLiveAgentFactory:
             system_instruction=instruction,
             opening_message="[Session start: the student has sat down. Begin the exam.]",
             voice_name=examiner.voice,
-            tools=("end_interview",),
+            tools=self._tools_for(plan),
             lead_name=examiner.name,
         )
+
+    @staticmethod
+    def _tools_for(plan: ExamPlan) -> tuple[ToolName, ...]:
+        """Every exam has the board: anything with numbers or several steps is written up, not just said."""
+        return ("end_interview", "write_on_board")
 
     async def _plan(self, uid: str, context: dict[str, Any]) -> ExamPlan:
         style = parse_style(context.get("examStyle"))

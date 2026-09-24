@@ -140,7 +140,12 @@ async def retention(_: worker_caller) -> dict[str, int]:
         store = user_content()
         for name in await store.list(prefix):
             # Recordings go; transcript and evaluation stay until the user deletes the session.
-            if "/live/" in name or name.endswith(("audio.m4a", "face-metrics.json")) or "/video-" in name:
+            if (
+                "/live/" in name
+                or "/board/" in name
+                or name.endswith(("audio.m4a", "face-metrics.json"))
+                or "/video-" in name
+            ):
                 await store.delete_prefix(name)
         await snap.reference.update(
             {"media.deleted": True, "media.audioPath": None, "media.video": None, "media.faceMetrics": None,

@@ -91,8 +91,13 @@ PANEL_MAX_CHARS = 600
 PANEL_TIMEOUT_S = 12
 
 
-async def speak_as_panelist(text: str, voice: str, rate: int = 24_000) -> bytes:
-    """A panel line as raw PCM16 mono at `rate`, ready for the live call."""
+async def speak_as_panelist(text: str, voice: str, rate: int = 24_000, *, fast: bool = False) -> bytes:
+    """A panel line as raw PCM16 mono at `rate`, ready for the live call.
+
+    `fast` goes straight to Chirp 3 HD (the same voices, in about a second) instead of trying
+    Gemini-TTS first, which can take 5-12 s: for a conversation where every colleague line is
+    a reply, not an occasional question (the leadership call).
+    """
     text = " ".join(text.split())[:PANEL_MAX_CHARS]
     if get_settings().ai_provider is AiProvider.FAKE:
         return b"\x00\x00" * (rate // 2)
@@ -110,6 +115,17 @@ async def speak_as_panelist(text: str, voice: str, rate: int = 24_000) -> bytes:
             log.info("ai_usage", extra={"purpose": "panel_question", "model": model, "characters": len(text),
                                         "latencyMs": int((time.monotonic() - started) * 1000)})
 
+    if fast:
+        try:
+            response = await synthesize(
+                "chirp3-hd",
+                input=tts.SynthesisInput(text=text),
+                voice=tts.VoiceSelectionParams(language_code="en-US", name=f"en-US-Chirp3-HD-{voice}"),
+            )
+            with wave.open(io.BytesIO(bytes(response.audio_content))) as wav:
+                return bytes(wav.readframes(wav.getnframes()))
+        except GoogleAPICallError as exc:
+            log.warning("fast panel speech failed", extra={"error": type(exc).__name__})
     try:
         response = await synthesize(
             TTS_MODEL,

@@ -2,7 +2,7 @@
 
 An oral exam is the same person throughout, so there is one examiner per style:
 the one who questions, and the one who watches you work at the board. Their faces
-are voice only: nobody is shown on screen. These are the same people the
+are recordings on our LiveTalking server (`infra/livetalking`), the same people the
 interview module uses — the ones who read as the most senior. Mirrors
 `src/data/examiners.ts`, and the two are kept in step by tests on both sides.
 """
@@ -16,8 +16,9 @@ from app.modules.exam.catalogs import ExamStyle
 
 @dataclass(frozen=True, slots=True)
 class Examiner:
-    """The person the candidate hears. No face: interviews are voice only."""
+    """A recording on our LiveTalking face server (`data/avatars/<avatar_id>`)."""
 
+    avatar_id: str
     name: str
     role: str
     voice: str
@@ -25,10 +26,10 @@ class Examiner:
 
 EXAMINERS: dict[ExamStyle, Examiner] = {
     # Questions across a desk: the senior academic who has heard every answer before.
-    ExamStyle.ORAL_QUESTIONS: Examiner("Prof. William Okonjo", "Examiner", "Sadaltager"),
+    ExamStyle.ORAL_QUESTIONS: Examiner("william", "Prof. William Okonjo", "Examiner", "Sadaltager"),
     # At the board: someone who follows a derivation line by line.
-    ExamStyle.BOARD_WORK: Examiner("Prof. Gabriel Sartori", "Examiner", "Charon"),
-    ExamStyle.UNKNOWN: Examiner("Prof. William Okonjo", "Examiner", "Sadaltager"),
+    ExamStyle.BOARD_WORK: Examiner("gabriel", "Prof. Gabriel Sartori", "Examiner", "Charon"),
+    ExamStyle.UNKNOWN: Examiner("william", "Prof. William Okonjo", "Examiner", "Sadaltager"),
 }
 
 DEFAULT = EXAMINERS[ExamStyle.UNKNOWN]

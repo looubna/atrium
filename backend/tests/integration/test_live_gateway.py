@@ -27,12 +27,12 @@ from app.platform.agents import live_gateway
 from app.platform.agents.live import (
     AudioOut,
     FakeLiveEngine,
-    InputText,
     Interrupted,
     OutputText,
     PanelTurn,
     TurnComplete,
 )
+from app.platform.agents.live_protocol import ForbiddenReason
 from app.platform.auth import dependencies as deps
 from app.platform.auth.dependencies import AuthUser
 from app.platform.clients import clients
@@ -44,7 +44,16 @@ from tests.integration.conftest import EMULATOR, PROJECT, as_user, fake_user
 def token_user(token: str) -> AuthUser:
     if not token.startswith("test:"):
         raise Unauthorized()
-    return AuthUser(uid=token.removeprefix("test:"), email_verified=True, sign_in_provider="apple.com", auth_time=0)
+    uid, _, flag = token.removeprefix("test:").partition("/")
+    # "test:alice/unverified" is the same person holding a token minted before they confirmed
+    # their address: an email/password account whose claim still says the address is unverified.
+    unverified = flag == "unverified"
+    return AuthUser(
+        uid=uid,
+        email_verified=not unverified,
+        sign_in_provider="password" if unverified else "apple.com",
+        auth_time=0,
+    )
 
 
 @pytest.fixture
@@ -83,10 +92,11 @@ def consent(db: firestore.Client, uid: str) -> None:
         db.document(f"users/{uid}/consents/{kind}").set({"accepted": True, "version": CURRENT_CONSENT_VERSION})
 
 
-def create_session(client: TestClient, uid: str, panel: str = "one_to_one") -> str:
+def create_session(client: TestClient, uid: str, panel: str = "one_to_one", mode: str = "online") -> str:
     sid = str(uuid.uuid4())
     r = client.post("/api/v1/interview/sessions", headers=as_user(uid),
-                    json={"id": sid, "practice": "general_behavioral", "durationMinutes": 10, "panel": panel})
+                    json={"id": sid, "practice": "general_behavioral", "durationMinutes": 10, "panel": panel,
+                          "mode": mode})
     assert r.status_code == 201, r.text
     return str(r.json()["id"])
 
@@ -113,30 +123,50 @@ def receive_until(ws: Any, kind: str, limit: int = 20) -> dict[str, Any]:
     raise AssertionError(f"no {kind} message")
 
 
-def join_panel(ws: Any) -> int:
-    """A panel call opens with the lead's introduction, then each colleague's hello.
+def join_panel(ws: Any, conn: Any, where: str = "online") -> int:
+    """A panel opens with the lead's introduction and a hello from each colleague.
 
-    Returns the turn number of the last hello.
+    On a call the lead hands each of them the floor in the same turn; the server speaks the hellos
+    in their own voices. In the meeting room the colleagues say hello by themselves once the lead's
+    welcome has been heard (`scripted_hellos`), so the lead only opens. Returns the last hello's turn.
     """
-    names = []
     seq = receive_until(ws, "turn_complete")["turnSeq"]
-    for _ in range(2):
+    if where == "in_person":
+        # The opening was the lead's welcome. Once it has been heard, the room's hellos follow
+        # without anyone handing over.
+        hellos = [("Daniel", ""), ("Grace", "")]
+        ws.send_json({"type": "playback_stopped", "turnSeq": seq, "mediaMs": 0})
+    else:
+        hellos = [("Daniel", "Hi, I'm Daniel, I lead the team you'd be joining."),
+                  ("Grace", "Hello, I'm Grace, I'd be one of your colleagues.")]
+        conn.inject(
+            AudioOut(b"\x00\x00" * 2400),
+            OutputText("Thanks for joining. My colleagues are with me today.", finished=True),
+            *[PanelTurn(first, words, "hello") for first, words in hellos],
+            TurnComplete(),
+        )
+    names = []
+    for _ in hellos:
         names.append(receive_until(ws, "panel_speaker")["name"])
         seq = receive_until(ws, "turn_complete")["turnSeq"]
-    assert names == ["Daniel Brooks", "Grace Lin"]
+    assert [n.split()[0] for n in names] == [first for first, _ in hellos]
     return int(seq)
 
 
-def close_code(ws: Any) -> int:
+def close_frame(ws: Any) -> tuple[int, str]:
     """The test session's raw receive() returns the close message rather than raising."""
     for _ in range(50):
         try:
             message = ws.receive()
         except WebSocketDisconnect as exc:
-            return int(exc.code)
+            return int(exc.code), str(exc.reason or "")
         if message["type"] == "websocket.close":
-            return int(message.get("code", 1000))
+            return int(message.get("code", 1000)), str(message.get("reason", ""))
     raise AssertionError("socket did not close")
+
+
+def close_code(ws: Any) -> int:
+    return close_frame(ws)[0]
 
 
 def test_session_creation_requires_consent(env: dict[str, Any]) -> None:
@@ -198,6 +228,25 @@ def test_consent_withdrawn_blocks_live(env: dict[str, Any]) -> None:
     with env["client"].websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
         ws.send_json({"type": "auth", "idToken": "test:alice"})
         assert close_code(ws) == 4403
+
+
+def test_a_4403_says_which_one_it_is(env: dict[str, Any]) -> None:
+    """The app writes the candidate a different sentence for each, so the reason is wire format.
+
+    Both of these close the socket the same way, and asking someone to accept a recording consent
+    they have already given — when it is their address that needs confirming — leaves them with
+    nothing they can do about it.
+    """
+    consent(env["db"], "alice")
+    sid = create_session(env["client"], "alice")
+    with env["client"].websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        ws.send_json({"type": "auth", "idToken": "test:alice/unverified"})
+        assert close_frame(ws) == (4403, ForbiddenReason.EMAIL_UNVERIFIED)
+
+    env["db"].document("users/alice/consents/recording").set({"accepted": False, "version": CURRENT_CONSENT_VERSION})
+    with env["client"].websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        ws.send_json({"type": "auth", "idToken": "test:alice"})
+        assert close_frame(ws) == (4403, ForbiddenReason.CONSENT_REQUIRED)
 
 
 def test_kill_switch_and_quota(env: dict[str, Any]) -> None:
@@ -334,15 +383,16 @@ def test_panel_says_hello_after_the_introduction_once(env: dict[str, Any]) -> No
 
     with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
         auth(ws, "alice")
-        join_panel(ws)
         conn = engine.connections[0]
+        join_panel(ws, conn)
         # An interruption while the lead is idle must not cut the colleagues' queued hellos.
         conn.inject(Interrupted())
-        # The lead's next turn does not replay the hellos, and a hello it asks for is ignored.
+        # The same hello again is the lead forgetting it has already made the introduction: the
+        # words have been said once, in their own voice, and saying them twice is worse than not.
         conn.inject(
             AudioOut(b"\x00\x00" * 2400),
             OutputText("Let's begin.", finished=True),
-            PanelTurn("Daniel", "Hi again.", "hello"),
+            PanelTurn("Daniel", "Hi, I'm Daniel, I lead the team you'd be joining.", "hello"),
             TurnComplete(),
         )
         seen = []
@@ -358,9 +408,11 @@ def test_panel_says_hello_after_the_introduction_once(env: dict[str, Any]) -> No
         receive_until(ws, "ended", limit=40)
     env["settle"]()
 
-    assert any("have said hello" in t for t in conn.received_text)
+    # The lead cannot hear its colleagues, so it is told they have introduced themselves.
+    assert any("introduced themselves" in t for t in conn.received_text)
     state = db.document(f"liveSessions/{sid}").get().to_dict()
     assert state["panelGreeted"] == ["Daniel Brooks", "Grace Lin"]
+    # Saying hello is not asking.
     assert state["panelAsked"] == [] and state["panelQuestions"] == 0
 
 
@@ -393,80 +445,80 @@ def answer(ws: Any, seq: int, at_ms: int) -> int:
     return seq
 
 
-def test_the_server_runs_the_colleagues_turns(env: dict[str, Any]) -> None:
+def test_a_colleague_asks_their_share_and_no_more(env: dict[str, Any]) -> None:
+    """A panel has a shape: the lead runs it and a colleague comes in once or twice.
+
+    The lead says its hand-over and writes the colleague's question in the same turn; the server
+    speaks it in their own voice. Once that colleague's share is spent the hand-over is refused —
+    silence after "over to you" is the one thing the candidate must never hear, so the question
+    comes back to the lead to ask itself.
+    """
     db, client, engine = env["db"], env["client"], env["engine"]
     consent(db, "alice")
-    sid = create_session(client, "alice", panel="panel")
+    sid = create_session(client, "alice", panel="panel", mode="in_person")
 
     with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
         auth(ws, "alice")
-        join_panel(ws)
         conn = engine.connections[0]
-        assert conn.spec.tools == ("end_interview",) and conn.spec.lead_name and conn.spec.panel_brief
-        # The lead asks; the candidate answers; the lead starts replying.
-        conn.inject(AudioOut(b"\x00\x00" * 2400), OutputText("Can you tell me about a project?", finished=True),
-                    TurnComplete())
-        receive_until(ws, "turn_complete")
-        conn.inject(
-            InputText("I led a migration.", finished=True),
-            AudioOut(b"\x00\x00" * 2400),
-            OutputText("Great. And what was the budget?", finished=True),
-            TurnComplete(),
-        )
+        join_panel(ws, conn, "in_person")
+        assert conn.spec.tools == ("end_interview", "give_floor")
+        assert conn.spec.lead_name and conn.spec.panel_brief
+        assert [(m.first_name, m.questions) for m in conn.spec.panel] == [("Daniel", 2), ("Grace", 0)]
+
         seq = 0
-        speakers = []
-        for round_no in range(2):
+        questions = ["What was the hardest part of that?", "How did you decide what to leave out?"]
+        for question in questions:
+            conn.inject(
+                AudioOut(b"\x00\x00" * 2400),
+                OutputText("Thanks, that's clear. Daniel, over to you.", finished=True),
+                PanelTurn("Daniel", question, "question"),
+                TurnComplete(),
+            )
             events = turn_events(ws, "panel_speaker")
             # The lead's short hand-over is its own turn, just before the colleague's.
             handover = [e for e in events if e["type"] == "caption"]
             assert handover and "over to you" in handover[-1]["text"]
             speaker = events[-1]
-            speakers.append(speaker["name"])
+            assert speaker["name"] == "Daniel Brooks"
             asked = turn_events(ws, "turn_complete")
             assert all(e["turnSeq"] == speaker["turnSeq"] for e in asked if e["type"] == "audio")
+            assert any(e.get("text") == question for e in asked)
             ws.send_json({"type": "playback_stopped", "turnSeq": speaker["turnSeq"], "mediaMs": seq * 100})
+            # The candidate answers the colleague into the same session: the lead hears it itself.
             seq = answer(ws, seq, seq * 100 + 500)
 
-            # The lead is told what happened, and takes the floor again.
-            first = speaker["name"].split()[0]
+        # A third turn for Daniel, and a question put to the note-taker, who never asks anything:
+        # neither is spoken, and each comes back to the lead with the words it wrote.
+        for who, refused in (("Daniel", "And what would you do differently?"),
+                             ("Grace", "How did you test any of it?")):
+            before = len([t for t in conn.received_text if "Panel note" in t])
+            conn.inject(
+                AudioOut(b"\x00\x00" * 2400),
+                OutputText(f"{who}, over to you.", finished=True),
+                PanelTurn(who, refused, "question"),
+                TurnComplete(),
+            )
+            seen = [e["type"] for e in turn_events(ws, "turn_complete")]
+            assert "panel_speaker" not in seen
             for _ in range(100):
-                if sum("Panel note" in t for t in conn.received_text) > round_no:
+                notes = [t for t in conn.received_text if "Panel note" in t]
+                if len(notes) > before:
                     break
                 time.sleep(0.05)
-            note = [t for t in conn.received_text if "Panel note" in t][round_no]
-            assert f"{first} asked" in note and "The candidate answered" in note and "Do not repeat" in note
-            assert "Can you tell me about a project?" in note  # the lead's own earlier question
-            conn.inject(AudioOut(b"\x00\x00" * 2400),
-                        OutputText(f"Thanks. Next question {round_no}?", finished=True), TurnComplete())
-            back = turn_events(ws, "turn_complete")
-            assert any(e["type"] == "audio" for e in back)
-            if round_no == 0:
-                # The candidate answers the lead — heard in the audio, before any transcript
-                # arrives — and the other colleague comes in next.
-                for _ in range(15):
-                    ws.send_bytes(loud(seq, seq * 100 + 500))
-                    seq += 1
-                time.sleep(0.3)
-                conn.inject(
-                    AudioOut(b"\x00\x00" * 2400),
-                    OutputText("And what about the budget?", finished=True),
-                    InputText("We shipped it early.", finished=True),
-                    TurnComplete(),
-                )
-        assert speakers == ["Daniel Brooks", "Grace Lin"]
+            assert len(notes) > before, f"the lead was never told {who} had no turn left"
+            assert refused in notes[-1] and who in notes[-1] and "ask it yourself" in notes[-1]
+
         ws.send_json({"type": "end"})
         receive_until(ws, "ended", limit=60)
     env["settle"]()
 
-    # The model never heard the answers given to the colleagues.
-    assert conn.received_audio_bytes < seq * 3200
+    state = db.document(f"liveSessions/{sid}").get().to_dict()
+    assert state["panelAsked"] == ["Daniel Brooks"] * 2 and state["panelQuestions"] == 2
     turns = [d.to_dict() for d in db.collection(f"users/alice/sessions/{sid}/turns").stream()]
-    texts = [t.get("text", "") for t in turns]
-    assert not any("budget" in t for t in texts)  # the lead's reply that was cut before anyone heard it
-    assert [t["panelist"] for t in turns if t.get("panelPurpose") == "question"] == ["Daniel Brooks", "Grace Lin"]
-    candidate = [t["text"] for t in turns if t["speaker"] == "candidate"]
-    # The answer to the lead's second question was transcribed only after the hand-over began: still kept.
-    assert "We shipped it early." in candidate and len(candidate) >= 4
+    spoken = [t["text"] for t in turns if t.get("panelPurpose") == "question"]
+    assert spoken == [f"Daniel Brooks: {q}" for q in questions]
+    # Nothing a colleague was refused was ever said to the candidate.
+    assert not any("would you do differently" in t.get("text", "") for t in turns)
 
 
 def test_reconnect_before_the_greeting_starts_over(env: dict[str, Any]) -> None:

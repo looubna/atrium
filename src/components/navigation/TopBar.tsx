@@ -100,10 +100,16 @@ export function TopBar() {
             </span>
           </div>
         )}
-        <Button variant="icon" aria-label="Settings">
+        {/* Frosted like the brand pill, so they read over a bright sky; 40 px to tap on a phone. */}
+        <Button variant="icon" aria-label="Settings" className="glass size-10 text-chalk sm:size-9">
           <IconSettings />
         </Button>
-        <Button variant="icon" aria-label="Account" className="bg-white/8" onClick={() => setAccountOpen(true)}>
+        <Button
+          variant="icon"
+          aria-label="Account"
+          className="glass size-10 text-chalk sm:size-9"
+          onClick={() => setAccountOpen(true)}
+        >
           <IconUser />
         </Button>
       </div>

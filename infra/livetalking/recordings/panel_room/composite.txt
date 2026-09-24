@@ -1,0 +1,6 @@
+[0:v]trim=start_frame=148:end_frame=200,setpts=PTS-STARTPTS,crop=1600:900:160:110,scale=1280:720:flags=lanczos,format=yuv420p,split[f][r0];
+[r0]trim=start_frame=1:end_frame=51,setpts=PTS-STARTPTS,reverse[r];
+[f][r]concat=n=2:v=1:a=0,setpts=N/25/TB[left];
+[0:v]trim=start_frame=77:end_frame=179,setpts=PTS-STARTPTS,crop=1600:900:160:110,scale=1280:720:flags=lanczos,format=yuv420p,setpts=N/25/TB[right];
+[1:v]format=gray,trim=end_frame=102,setpts=N/25/TB[m];
+[left][right][m]maskedmerge[out]

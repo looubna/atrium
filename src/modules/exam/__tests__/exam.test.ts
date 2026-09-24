@@ -21,6 +21,7 @@ const liveState = vi.hoisted(() => ({
   captions: [],
   timeLeftMs: null as number | null,
   coding: false,
+  boardProblem: null as string | null,
   headphones: false,
   muted: false,
 }))
@@ -34,8 +35,10 @@ vi.mock('@/modules/interview/live/useLiveInterview', () => ({
     setMuted: vi.fn(),
     mediaMs: () => 0,
     sendCodeSnapshot: vi.fn(),
+    sendBoardImage: vi.fn(),
   }),
 }))
+vi.mock('@/platform/avatar/useAvatar', () => ({ useAvatar: () => ({ avatar: null, unavailable: false }) }))
 vi.mock('@/lib/useCamera', () => ({ useCamera: () => ({ stream: null, error: null }) }))
 
 // The setup screen talks to the API and to Firestore listeners; neither exists in a test.
@@ -212,10 +215,14 @@ describe('the exam room', () => {
   it('seats you across the desk from the professor, with one way in and one way out', () => {
     const out = room()
     expect(out).toContain('aria-label="Oral exam"')
-    expect(out).toContain('/video/inperson/room/one/landscape.jpg')
+    // The professor is already at the desk: never an empty chair while the face connects.
+    expect(out).toContain('/faces/william.jpg')
+    expect(out).not.toContain('/video/inperson/room/one/landscape.jpg')
     expect(out).toContain('Begin with Okonjo')
     expect(out).toContain('aria-label="Leave"')
-    expect(out).not.toContain('BOARD')
+    // Every exam has the board beside the desk, for questions that need working.
+    expect(out).toContain('aria-label="Your board"')
+    expect(out).toContain('it goes up on the board')
   })
 
   it('splits the screen with a board when the exam is worked at one', () => {
@@ -223,11 +230,29 @@ describe('the exam room', () => {
     const out = room()
     expect(out).toContain('BOARD')
     expect(out).toContain('aria-label="Your board"')
-    expect(out).toContain('Work the problem here')
     expect(out).toContain('Begin with Sartori')
+    // A board exam is written, so the pen is there and it is the tool in hand.
+    expect(out).toContain('aria-label="Write on the board"')
+    expect(out).toContain('aria-label="Write with the pen"')
+    expect(out).toContain('aria-label="Erase"')
+    expect(out).toContain('aria-label="Undo the last stroke"')
+    expect(out).toContain('aria-label="Type"')
     // Once the exam is running, the board says the examiner is reading it.
     liveState.phase = 'live'
-    expect(room()).toContain('The examiner can see what you write')
+    expect(room()).toContain('The examiner can see your board')
+  })
+
+  it('pins the problem the examiner wrote above the working area', () => {
+    useAppStore.setState({ session: session('board_work') })
+    liveState.phase = 'live'
+    liveState.boardProblem = 'A pipe narrows from 10 cm to 4 cm.\nWater flows at 2 m/s. Find the exit velocity.'
+    const out = room()
+    // Numbers said once are numbers lost: they have to be readable on the board.
+    expect(out).toContain('THE PROBLEM')
+    expect(out).toContain('narrows from 10 cm to 4 cm')
+    expect(out).toContain('Find the exit velocity')
+    liveState.boardProblem = null
+    expect(room()).not.toContain('THE PROBLEM')
   })
 
   it('keeps the camera off unless it was asked for', () => {

@@ -6,12 +6,25 @@ This is the only place that knows which modules are installed.
 from __future__ import annotations
 
 from app.core.settings import Env, get_settings
-from app.modules import debate, exam, interview
+from app.modules import (
+    admission,
+    debate,
+    exam,
+    interview,
+    language,
+    leadership,
+    meeting,
+    negotiation,
+    networking,
+    presentation,
+    sales,
+)
 from app.modules.practice.api import router as practice_router
 from app.modules.registry import registry
 from app.platform.agents.live_gateway import router as live_router
 from app.platform.competencies.api import router as competencies_router
 from app.platform.deletion import router as deletion_router
+from app.platform.faces.api import router as faces_router
 from app.platform.feedback.examples_api import router as examples_router
 from app.platform.jobs.module_tasks import dispatch_local
 from app.platform.jobs.queue import set_local_dispatcher
@@ -25,7 +38,7 @@ from app.platform.users import router as users_router
 
 api_routers = [
     users_router, deletion_router, sessions_router, video_router, face_metrics_router, examples_router,
-    competencies_router, live_router, practice_router,
+    competencies_router, live_router, practice_router, faces_router,
 ]
 if get_settings().app_env in (Env.LOCAL, Env.TEST):
     api_routers += [local_router, local_upload_router]
@@ -36,3 +49,11 @@ registry.register_platform_routers(api=api_routers, worker=[worker_router])
 registry.register(interview.descriptor())
 registry.register(exam.descriptor())
 registry.register(debate.descriptor())
+registry.register(networking.descriptor())
+registry.register(admission.descriptor())
+registry.register(leadership.descriptor())
+registry.register(sales.descriptor())
+registry.register(negotiation.descriptor())
+registry.register(meeting.descriptor())
+registry.register(presentation.descriptor())
+registry.register(language.descriptor())

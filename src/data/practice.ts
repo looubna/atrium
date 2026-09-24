@@ -5,11 +5,17 @@
  */
 
 import type { ExamStyle } from '@/modules/exam/api'
+import type {
+  DebateDifficulty,
+  DebateFocus,
+  DebateFormatId,
+  DebatePosition,
+} from '@/modules/debate/api'
 
 export type Posture = 'sitting' | 'standing'
 
 /** Where a format takes the user when they go in. */
-export type Destination = 'meeting' | 'theater' | 'call' | 'drill' | 'talk' | 'exam'
+export type Destination = 'meeting' | 'theater' | 'call' | 'drill' | 'talk' | 'exam' | 'debate' | 'admission'
 
 export interface PracticeFormat {
   id: string
@@ -19,7 +25,19 @@ export interface PracticeFormat {
   /** Formats that also ask whether the user sits or stands. */
   askPosture?: boolean
   /** Formats with their own setup form (interview, sales, leadership). */
-  kind?: 'interview' | 'sales' | 'leadership' | 'negotiation' | 'meeting' | 'networking' | 'defence' | 'emotional' | 'exam'
+  kind?:
+    | 'interview'
+    | 'sales'
+    | 'leadership'
+    | 'negotiation'
+    | 'meeting'
+    | 'networking'
+    | 'defence'
+    | 'admission'
+    | 'emotional'
+    | 'exam'
+    | 'debate'
+    | 'presentation'
 }
 
 export type InterviewType = 'recruiter' | 'behavioral' | 'coding' | 'technical' | 'hiring-manager' | 'case'
@@ -78,22 +96,67 @@ export const SALES_TYPES: { id: SalesType; label: string; note: string }[] = [
 export interface SalesSetup {
   type: SalesType
   mode: InterviewMode
+  /** The live session on the server (`backend/app/modules/sales`), once it has been set up. */
+  sessionId?: string
+  /** Who is on the other side, the one who speaks first. */
+  people?: { key: string; name: string; role: string }[]
+  /** The seller's pre-read, shown before joining: the deal, who is there, the goal. */
+  briefing?: SalesBriefing
+}
+
+export interface SalesBriefing {
+  title: string
+  seller: string
+  org: string
+  about: string
+  situation: string
+  goal: string
+  people: { name: string; role: string; known: string }[]
+  format: string
 }
 
 export type LeadershipScenario = 'motivate' | 'conflict' | 'crisis' | 'delegate' | 'feedback'
 
 export const LEADERSHIP_SCENARIOS: { id: LeadershipScenario; label: string; note: string }[] = [
-  { id: 'motivate', label: 'Motivate people', note: 'Re-energise a team that has lost momentum' },
-  { id: 'conflict', label: 'Manage conflict', note: 'Two colleagues who can no longer work together' },
-  { id: 'crisis', label: 'Handle a crisis', note: 'Something has gone wrong; the team looks to you' },
-  { id: 'delegate', label: 'Delegate, goals & expectations', note: 'Hand work over and make the bar clear' },
-  { id: 'feedback', label: 'Give feedback', note: 'Say the hard thing so it lands' },
+  { id: 'motivate', label: 'Motivate people', note: 'The launch slipped twice and the team has gone flat' },
+  { id: 'conflict', label: 'Manage conflict', note: 'Design and marketing clashed in public over a rollback' },
+  { id: 'crisis', label: 'Handle a crisis', note: '12% of payments failing, the CEO wants an update by 10:30' },
+  { id: 'delegate', label: 'Delegate, goals & expectations', note: 'Hand out three Q4 projects to a stretched team' },
+  { id: 'feedback', label: 'Give feedback', note: 'One-to-one with a strong engineer whose behaviour slipped' },
+]
+
+/** The user's field, so the call is set in their kind of work. Mirrors `DOMAINS` in `modules/leadership/world.py`. */
+export const LEADERSHIP_DOMAINS: { id: string; label: string; note: string }[] = [
+  { id: 'software', label: 'Software & IT', note: 'Engineering, product, IT operations' },
+  { id: 'marketing', label: 'Marketing', note: 'Campaigns, brand, content, growth' },
+  { id: 'sales', label: 'Sales', note: 'Accounts, targets, pipeline' },
+  { id: 'finance', label: 'Finance & accounting', note: 'Close, audit, reporting, budgets' },
+  { id: 'healthcare', label: 'Healthcare', note: 'Clinical teams, wards, clinics' },
+  { id: 'operations', label: 'Operations & manufacturing', note: 'Plants, logistics, supply chain' },
+  { id: 'education', label: 'Education', note: 'Schools, departments, faculty' },
+  { id: 'customer_service', label: 'Customer service', note: 'Support teams, contact centres' },
+  { id: 'hospitality', label: 'Hospitality & retail', note: 'Hotels, restaurants, stores' },
+  { id: 'other', label: 'Other', note: 'Describe your field' },
 ]
 
 export interface LeadershipSetup {
   /** The full simulation runs through several situations; a scenario practises one. */
   mode: 'full' | 'scenario'
   scenario?: LeadershipScenario
+  /** The live call on the server (`backend/app/modules/leadership`), once it has been set up. */
+  sessionId?: string
+  /** Who is on the call, the one who speaks most first. */
+  team?: { name: string; role: string; avatar: string }[]
+  /** The manager's pre-read, shown before joining: what happened, who is there, what it is for. */
+  briefing?: LeadershipBriefing
+}
+
+export interface LeadershipBriefing {
+  title: string
+  company: string
+  situations: { label: string; whatHappened: string; yourGoal: string }[]
+  people: { name: string; role: string; noticed: string }[]
+  format: string
 }
 
 /** Face to face with one person, around a table with several, or on a video call. */
@@ -118,10 +181,31 @@ export const NEGOTIATION_SCENARIOS: { id: NegotiationScenario; label: string; no
 ]
 
 export interface NegotiationSetup {
-  format: GatheringFormat
   scenario: NegotiationScenario
-  /** The user's own situation and goal, for "Other". */
+  /** With one person, or a group of three. */
+  group: boolean
+  mode: InterviewMode
+  /** The user's own situation and goal (always for "Other"). */
   description?: string
+  /** The live session on the server (`backend/app/modules/negotiation`), once it has been set up. */
+  sessionId?: string
+  /** Who is across the table, the one who leads first. */
+  people?: { key: string; name: string; role: string }[]
+  /** The user's pre-read, shown before joining. */
+  briefing?: NegotiationBriefing
+}
+
+export interface NegotiationBriefing {
+  title: string
+  you: string
+  org: string
+  about: string
+  situation: string
+  /** The user's own side: what they want, their walk-away point, their alternatives. */
+  position: string
+  goal: string
+  people: { name: string; role: string; known: string }[]
+  format: string
 }
 
 export type MeetingRole = 'participant' | 'leader' | 'stakeholder'
@@ -133,11 +217,61 @@ export const MEETING_ROLES: { id: MeetingRole; label: string; note: string }[] =
 ]
 
 export interface MeetingSetup {
-  format: GatheringFormat
   role: MeetingRole
   /** What the meeting is about. */
   topic: string
+  /** With one colleague, or a group of three. */
+  group: boolean
+  mode: InterviewMode
   material?: AttachedFile
+  /** The live session on the server (`backend/app/modules/meeting`), once it has been set up. */
+  sessionId?: string
+  /** Who else is in the meeting, the one who speaks most first. */
+  people?: { key: string; name: string; role: string }[]
+  /** The user's pre-read, shown before joining. */
+  briefing?: MeetingBriefing
+}
+
+/** The pre-read for a meeting: a negotiation's parts (the user's aims as the position), and what to discuss. */
+export type MeetingBriefing = NegotiationBriefing & {
+  /** What the user should raise in the meeting, from their role, the topic and their material. */
+  points?: string[]
+}
+
+export type PresentationFormat = 'small-room' | 'large-audience' | 'virtual' | 'academic'
+
+/** The presentation a menu entry sets up: the business formats by their id, the university's by name. */
+export const presentationFormatOf = (format: PracticeFormat): PresentationFormat =>
+  format.id === 'academic-presentation' ? 'academic' : (format.id as PresentationFormat)
+
+/**
+ * Presentations judged standing at a lectern, where posture and gestures are part of the analysis:
+ * the camera check asks for the whole body there.
+ */
+export const presentsStanding = (format: PresentationFormat): boolean =>
+  format === 'academic' || format === 'large-audience'
+
+export interface PresentationSetup {
+  format: PresentationFormat
+  /** Questions on the talk and the slides (the audience listens), or on the slides alone. */
+  questions: 'talk' | 'slides'
+  title?: string
+  /** The live session on the server (`backend/app/modules/presentation`), once it has been set up. */
+  sessionId?: string
+  /** The audience, the chair first. */
+  people?: { key: string; name: string; role: string }[]
+  briefing?: PresentationBriefing
+}
+
+export interface PresentationBriefing {
+  title: string
+  audience: string
+  expects: string
+  tips: string[]
+  people: { name: string; role: string }[]
+  format: string
+  /** Whether the slides could be read (their text shapes the questions). */
+  slides: boolean
 }
 
 export type NetworkingTag = 'junior' | 'peer' | 'senior' | 'executive' | 'client'
@@ -187,6 +321,45 @@ export interface ExamSetup {
   camera?: boolean
 }
 
+/**
+ * A scholarship or admission interview: the preparation it runs on (the researched opportunity,
+ * the read application and the predicted questions) and, once the call exists, its session.
+ */
+export interface AdmissionSessionSetup {
+  prepId: string
+  /** The scholarship or programme, for the call's header. */
+  opportunity: string
+  sessionId?: string
+  /** The candidate asked for feedback on how they come across, so the camera is on. */
+  camera?: boolean
+}
+
+/**
+ * A debate the user set up. The motion, both positions, the format and the
+ * difficulty are all settled by the server; this is what the room needs to render
+ * and what `describeSession` puts in the summary line.
+ */
+export interface DebateSetup {
+  /** The motion, as it will be argued. */
+  motion: string
+  /** Which side each of you takes. */
+  position: DebatePosition
+  aiPosition: DebatePosition
+  format: DebateFormatId
+  difficulty: DebateDifficulty
+  /** The prepared debate this came from, when it was prepared at all. */
+  debateId?: string
+  prepId?: string
+  /** The server-side session; present once the debate can go live. */
+  sessionId?: string
+  /** Who argues the other side. */
+  opponentName?: string
+  /** One weakness this attempt leans on, when it was started from feedback. */
+  focus?: DebateFocus
+  /** The user asked for feedback on how they come across, so the camera is on. */
+  camera?: boolean
+}
+
 export interface NetworkingSetup {
   /** Whether the user knows who they are talking to (a badge, an introduction). */
   roleVisible: boolean
@@ -200,20 +373,23 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
       id: 'small-room',
       label: 'Small-room presentation',
       note: 'In the meeting room, a few people around a table',
-      destination: 'meeting',
-      askPosture: true,
+      // All three are the presentation screen (`PresentationCall`), with a live audience.
+      destination: 'call',
+      kind: 'presentation',
     },
     {
       id: 'large-audience',
       label: 'Large audience presentation',
       note: 'In the auditorium: tiered seats, a stage, a big screen',
-      destination: 'theater',
+      destination: 'call',
+      kind: 'presentation',
     },
     {
       id: 'virtual',
       label: 'Virtual presentation',
       note: 'Straight into a video call, screen shared',
       destination: 'call',
+      kind: 'presentation',
     },
   ],
   Interview: [
@@ -252,25 +428,22 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
       id: 'admissions-interview',
       label: 'Scholarship / admissions interview',
       note: 'Before the selection committee: your goals, your record, why you',
-      destination: 'theater',
-      // A committee asks the questions, as in a defence.
-      kind: 'defence',
+      // A video call with a professor from the committee, questioning you from your own file.
+      destination: 'admission',
+      // Its own kind: the preparation behind it researches the scholarship and reads the
+      // candidate's application, which no other format does.
+      kind: 'admission',
     },
   ],
   'Academic Presentation': [
     {
       id: 'academic-presentation',
       label: 'Academic presentation',
-      note: 'Present your research from the lectern, then take questions from the hall',
-      destination: 'theater',
-    },
-  ],
-  Seminar: [
-    {
-      id: 'seminar',
-      label: 'Seminar',
-      note: 'Lead the session and handle questions and comments from the room',
-      destination: 'theater',
+      note: 'Present your research from the lectern, then take questions from the room',
+      // A live presentation (`PresentationCall`): the university classroom, a session chair and
+      // academics asking about the research, recorded for feedback.
+      destination: 'call',
+      kind: 'presentation',
     },
   ],
   'Oral Exam': [
@@ -287,8 +460,10 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
     {
       id: 'debate',
       label: 'Debate',
-      note: 'Argue your position and answer challenges from the floor',
-      destination: 'theater',
+      note: 'Take a side and argue it against an opponent who argues back',
+      // Its own screen: the two of you across a table, not a stage with an audience.
+      destination: 'debate',
+      kind: 'debate',
     },
   ],
   Networking: [
@@ -305,8 +480,8 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
       id: 'negotiation',
       label: 'Negotiation practice',
       note: 'Salary, price, contract, deadline, scope, partnership, or your own',
-      // One-to-one and group happen in the meeting room; virtual is a video call.
-      destination: 'meeting',
+      // Online is a video call, in person the room: both are the negotiation screen, not the building.
+      destination: 'call',
       kind: 'negotiation',
     },
   ],
@@ -315,7 +490,8 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
       id: 'team-meeting',
       label: 'Meeting practice',
       note: 'Your role, the topic, and any material to bring',
-      destination: 'meeting',
+      // Online is a video call, in person the room: both are the meeting screen, not the building.
+      destination: 'call',
       kind: 'meeting',
     },
   ],
@@ -324,7 +500,8 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
       id: 'leadership',
       label: 'Leadership practice',
       note: 'A full leadership simulation, or one specific scenario',
-      destination: 'meeting',
+      // A video call with your team, like Zoom (LeadershipCall).
+      destination: 'call',
       kind: 'leadership',
     },
   ],
@@ -393,6 +570,8 @@ export const DESTINATION_LABEL: Record<Destination, string> = {
   drill: 'the practice room',
   talk: 'the park bench',
   exam: 'the examination room',
+  debate: 'the debating room',
+  admission: 'the video call',
 }
 
 /** A session the user has set up, carried from the panel into the building. */
@@ -407,15 +586,32 @@ export interface SessionSetup {
   interview?: InterviewSetup
   sales?: SalesSetup
   leadership?: LeadershipSetup
+  presentation?: PresentationSetup
   negotiation?: NegotiationSetup
   meeting?: MeetingSetup
   networking?: NetworkingSetup
   emotional?: EmotionalSetup
   exam?: ExamSetup
+  debate?: DebateSetup
+  admission?: AdmissionSessionSetup
 }
 
 /** "Presentation · Small-room · Standing · 15 min", or "Interview · Behavioral · Online · Panel · 30 min" */
-const gatheringLabel = (f: GatheringFormat) => GATHERING_FORMATS.find((g) => g.id === f)?.label
+
+/** Mirrors `FORMAT_LABELS` and the difficulties in `backend/app/modules/debate/catalogs.py`. */
+export const DEBATE_FORMAT_LABEL: Record<DebateFormatId, string> = {
+  free: 'Free debate',
+  structured: 'Structured debate',
+  socratic: 'Socratic debate',
+  oxford: 'Formal (Oxford-style)',
+  devils_advocate: "Devil's advocate",
+}
+
+export const DEBATE_DIFFICULTY_LABEL: Record<DebateDifficulty, string> = {
+  beginner: 'Beginner',
+  intermediate: 'Intermediate',
+  advanced: 'Advanced',
+}
 
 export const EXAM_STYLE_LABEL: Record<ExamStyle, string> = {
   oral_questions: 'The professor asks questions',
@@ -424,7 +620,14 @@ export const EXAM_STYLE_LABEL: Record<ExamStyle, string> = {
 }
 
 export const describeSession = (s: SessionSetup) =>
-  s.exam
+  s.debate
+    ? [
+        s.debate.position === 'for' ? 'Arguing FOR' : 'Arguing AGAINST',
+        DEBATE_FORMAT_LABEL[s.debate.format],
+        DEBATE_DIFFICULTY_LABEL[s.debate.difficulty],
+        `${s.minutes} min`,
+      ].join(' · ')
+    : s.exam
     ? [s.exam.subject || s.area, EXAM_STYLE_LABEL[s.exam.style], `${s.minutes} min`].join(' · ')
     : s.emotional
     ? [
@@ -445,14 +648,16 @@ export const describeSession = (s: SessionSetup) =>
     ? [
         s.area,
         NEGOTIATION_SCENARIOS.find((c) => c.id === s.negotiation!.scenario)?.label,
-        gatheringLabel(s.negotiation.format),
+        s.negotiation.group ? 'Group' : 'One-to-one',
+        s.negotiation.mode === 'online' ? 'Online' : 'In person',
         `${s.minutes} min`,
       ].join(' · ')
     : s.meeting
     ? [
         s.area,
         MEETING_ROLES.find((r) => r.id === s.meeting!.role)?.label,
-        gatheringLabel(s.meeting.format),
+        s.meeting.group ? 'Group' : 'One-to-one',
+        s.meeting.mode === 'online' ? 'Online' : 'In person',
         `${s.minutes} min`,
       ].join(' · ')
     : s.sales
@@ -487,3 +692,20 @@ export const describeSession = (s: SessionSetup) =>
       ]
         .filter(Boolean)
         .join(' · ')
+
+/**
+ * Formats whose session puts a lip-synced face on screen (an interviewer, an examiner, a debate
+ * opponent, a networking guest, anyone on a video call). Opening their setup starts the face server.
+ */
+export function showsLiveFace(format: PracticeFormat): boolean {
+  // Every presentation audience has lip-synced faces (the auditorium's front row included).
+  if (format.kind === 'presentation') return true
+  return (
+    format.destination === 'call' ||
+    format.kind === 'interview' ||
+    format.kind === 'exam' ||
+    format.kind === 'debate' ||
+    format.kind === 'networking' ||
+    format.kind === 'admission'
+  )
+}

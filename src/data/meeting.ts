@@ -6,6 +6,11 @@
 
 /** Seat ids of the three attendees, shared by the 3D room and the video view. */
 export const MEETING_ATTENDEE_IDS = [900, 901, 902] as const
+/**
+ * Stand-in seat ids for an audience. Nobody is modelled in the rooms any more, so these name
+ * no one: they only let a few hands be up at once, and the footage shows whose hand it is.
+ */
+export const AUDIENCE_ATTENDEE_IDS = [910, 911, 912, 913, 914, 915] as const
 
 export const MEETING_MEDIA_BASE = '/video/meeting'
 /** The auditorium from the lectern, same layout: `<orientation>/poster.jpg` plus clips. */

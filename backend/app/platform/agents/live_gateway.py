@@ -22,8 +22,10 @@ import binascii
 import contextlib
 import logging
 import os
+import re
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -57,31 +59,29 @@ from app.platform.agents.live import (
     Usage,
 )
 from app.platform.agents.live_protocol import (
+    Begin,
     BoardImage,
     ClientEnd,
     CloseCode,
     CodeSnapshot,
+    ForbiddenReason,
     Ping,
     PlaybackStarted,
     PlaybackStopped,
     ProtocolError,
+    Release,
     encode_server_audio,
     parse_audio_frame,
     parse_auth,
     parse_control,
 )
 from app.platform.agents.panel import (
-    MAX_ANSWER_MS,
-    MIN_SPEECH_MS,
-    NO_ANSWER_MS,
     SPEECH_RMS,
-    AnswerListener,
-    Exchange,
     Line,
-    catch_up_note,
+    TurnEndWatch,
     frame_rms,
+    is_greeting,
     questions_in,
-    write_panel_line,
 )
 from app.platform.ai.gateway import AiUnavailable
 from app.platform.ai.pricing import token_cost_micros
@@ -95,7 +95,7 @@ from app.platform.runtime_config import ai_enabled
 from app.platform.sessions import EndReason, SessionStatus, mark_ended, mark_live
 from app.platform.storage.objects import user_content
 from app.platform.storage.paths import StoragePaths, Track
-from app.platform.transcripts.stt import SttFailed, transcribe_short
+from app.platform.transcripts.model import normalize
 from app.platform.usage import Metric, Period, UsageService
 from app.platform.users import AccountDeleting, ConsentKind, ensure_user, plan_limits, require_consents
 
@@ -108,6 +108,16 @@ IDLE_TIMEOUT_S = 180.0
 WRAP_UP_WARNING_MS = 60_000
 RECONNECT_SOON_AFTER_S = 50 * 60
 END_GRACE_S = 12.0
+#: How much longer than a line's own audio to wait for the page to report it finished playing.
+#: Covers a face running behind and the round trip; beyond it the report is not coming, and
+#: waiting on the loop that carries the interviewer's audio is what makes it fall silent.
+PLAYED_SLACK_S = 4.0
+#: How far behind our clock a face can be speaking. `playback_stopped` is meant to already account
+#: for it — the page holds the report back until the face falls silent — but that rests on the
+#: renderer's own level meter, and if the meter is not running the report comes early and the next
+#: voice lands on top. So a line is also never followed sooner than its own length plus this,
+#: measured from when it began playing. Belt as well as braces: one of the two is enough.
+FACE_LAG_MARGIN_MS = 900
 MAX_FRAMES_PER_SECOND = 40
 # The client keeps ~12 s of frames (120) and sends them in one burst when the session
 # becomes ready — after a slow start or a reconnect — so allow that burst on top.
@@ -120,9 +130,93 @@ CODE_TO_MODEL_MIN_INTERVAL_S = 8.0
 #: enough that reading it never falls behind the conversation.
 BOARD_IMAGE_MIN_INTERVAL_S = 4.0
 MAX_BOARD_IMAGE_BYTES = 120_000
-MAX_PANEL_QUESTIONS = 8  # four each
+#: Kept with the recording so the evaluator can read the working afterwards. A board exam
+#: fills perhaps a dozen boards; beyond that the later ones say nothing new.
+MAX_BOARD_IMAGES = 16
+#: An overall ceiling on colleague questions, whatever each member's own share allows.
+MAX_PANEL_QUESTIONS = 8
 PANEL_CHUNK_BYTES = 24_000 * 2 // 5  # 200 ms of 24 kHz PCM16
 RESUME_MESSAGE = "[The connection was restored. Continue the interview from where it left off.]"
+#: The model sometimes ends a session minutes in (a rude remark, a garbled answer). Before this share
+#: of the time has passed it may not: the candidate can always leave themselves.
+MODEL_END_MIN_SHARE = 0.5
+EARLY_END_NOTE = (
+    "[The session is not over: most of the time is still left. Do not say goodbye. Carry on with your "
+    "next question. Only the candidate can end early, and they have not asked to.]"
+)
+def hellos_done_note(greeted: Sequence[str]) -> str:
+    """What the lead is told once its colleagues have introduced themselves.
+
+    It names them because the lead has no other way of knowing: their hellos were spoken by us,
+    so they are absent from its own transcript, and without the record it introduces the same
+    colleague a second time.
+    """
+    who = " and ".join(greeted) if greeted else "your colleagues"
+    return (
+        f"[Session note, not from the candidate: {who} have now introduced themselves to the "
+        "candidate, in their own voices. Do not introduce them again. Say what the interview will "
+        "cover in one sentence, then ask your first question.]"
+    )
+def floor_declined_note(first_name: str, words: str) -> str:
+    """What the lead is told when it hands the floor to a colleague who has no turn left.
+
+    A panel has a shape: the lead runs it and the others come in once or twice. When the lead
+    forgets and hands over anyway, the colleague stays quiet — and the candidate has just heard
+    "…over to you" followed by nobody. That silence is the lead's to fill, so it is told what
+    happened and given back the question it wrote, to ask in its own voice.
+    """
+    return (
+        f"[Panel note, not from the candidate: {first_name} has already asked their questions and is "
+        "sitting the rest of the interview out, so they did not speak — the candidate has just heard "
+        "you hand over to nobody. Cover it in a few natural words (\"actually, let me pick that one "
+        f"up\") and ask it yourself now, in your own voice: \"{words}\" Do not give {first_name} the "
+        "floor again.]"
+    )
+
+
+SILENT_CANDIDATE_NOTE = (
+    "[Session note, not from the candidate: they have not said a word since your question — they "
+    "are still thinking about it. Do NOT ask a new question and do NOT move on. Say one short, "
+    "warm line about the SAME question: offer to rephrase it, give a small hint, or ask whether "
+    "they would like a moment. Then stop and listen again.]"
+)
+#: What a presenter says to open the floor: "any questions?", "happy to take your questions".
+_INVITES_QUESTIONS = re.compile(
+    r"\b(any|your|some|take|for|open (it|the floor) (up )?(to|for))\s+questions\b|\bquestions\s*\?",
+    re.IGNORECASE,
+)
+
+
+#: After a held floor is released, how long the user must have been quiet (they often press the
+#: button on their last words) and then how long the model gets to start its own first question,
+#: before it is sent the release note. Sending the note while the model is already answering the
+#: end of the talk made two replies at once — two questions back to back, then a silent session.
+#: With `one_question_per_turn`: after a question, a colleague may not ask another until the user has
+#: spoken at least this long. A breath at the start of an answer is not an answer.
+MIN_ANSWER_MS = 3_000
+#: Output transcript arriving this soon after a turn ends is that turn's, not a new reply.
+LATE_TRANSCRIPT_S = 2.0
+RELEASE_QUIET_S = 1.0
+RELEASE_WAIT_S = 1.5
+#: A first reply after the release this short is a filler ("Mm."), not the questions starting.
+RELEASE_FILLER_WORDS = 3
+#: If the audience has still said nothing this long after the release note, it is reminded once.
+RELEASE_NUDGE_S = 6.0
+RELEASE_NUDGE = (
+    "[The speaker is waiting for your questions and nobody has spoken. Speak now, out loud: as the chair, "
+    "ask the first question, or bring in a colleague with give_floor.]"
+)
+
+
+def invites_questions(text: str) -> bool:
+    """Whether the user just opened the floor to questions (a presentation's hand-over)."""
+    return bool(_INVITES_QUESTIONS.search(text))
+
+
+TURN_END_NOTE = (
+    "[The candidate has finished speaking and is waiting for you. Reply to what they just said: a brief "
+    "acknowledgement, then a follow-up question or your next question.]"
+)
 MAX_CODE_SNAPSHOTS = 400
 INSTANCE_ID = os.environ.get("K_REVISION", "local") + "-" + uuid.uuid4().hex[:8]
 
@@ -189,11 +283,16 @@ class LiveState:
     interviewer_turn_seq: int = 0
     segments: dict[str, int] = field(default_factory=lambda: {Track.CANDIDATE.value: 0, Track.INTERVIEWER.value: 0})
     code_snapshots: int = 0
+    board_images: int = 0
     panel_questions: int = 0
+    #: One entry per question actually put by a colleague, so a name appears as often as they asked.
+    #: That count against `PanelMember.questions` is what keeps a colleague to their share.
     panel_asked: list[str] = field(default_factory=list)
     panel_greeted: list[str] = field(default_factory=list)
     #: Opaque state belonging to the module's turn observer (the debate's argument state).
     module_state: dict[str, Any] | None = None
+    #: The user has handed over a held floor (`LiveAgentSpec.hold_floor`): questions have started.
+    released: bool = False
 
     @classmethod
     def from_doc(cls, uid: str, data: dict[str, Any]) -> LiveState:
@@ -207,10 +306,12 @@ class LiveState:
             interviewer_turn_seq=int(data.get("interviewerTurnSeq", 0)),
             segments={**{t.value: 0 for t in Track}, **(data.get("segments") or {})},
             code_snapshots=int(data.get("codeSnapshots", 0)),
+            board_images=int(data.get("boardImages", 0)),
             panel_questions=int(data.get("panelQuestions", 0)),
             panel_asked=[str(n) for n in data.get("panelAsked") or []],
             panel_greeted=[str(n) for n in data.get("panelGreeted") or []],
             module_state=data.get("moduleState"),
+            released=bool(data.get("released", False)),
         )
 
     def to_doc(self) -> dict[str, Any]:
@@ -224,10 +325,12 @@ class LiveState:
             "interviewerTurnSeq": self.interviewer_turn_seq,
             "segments": self.segments,
             "codeSnapshots": self.code_snapshots,
+            "boardImages": self.board_images,
             "panelQuestions": self.panel_questions,
             "panelAsked": self.panel_asked,
             "panelGreeted": self.panel_greeted,
             "moduleState": self.module_state,
+            "released": self.released,
             "updatedAt": firestore.SERVER_TIMESTAMP,
         }
 
@@ -294,6 +397,11 @@ class LiveGateway:
         self.in_interviewer_turn = False
         self.interviewer_chunk = 0
         self.interviewer_turn_bytes = 0
+        self.turn_end = TurnEndWatch()
+        self.turn_audio_at: dict[int, int] = {}
+        self.hold_opening = False
+        #: Held until the candidate is in place; None once sent (or nothing to send).
+        self.pending_opening: str | None = None
         self.connected_at = time.monotonic()
         self.elapsed_base_ms = 0
         self.last_activity = time.monotonic()
@@ -318,22 +426,64 @@ class LiveGateway:
         self.coding = False
         # Panel interviews (see panel.py): the model plays the lead; the server runs colleague turns.
         self.panel: tuple[PanelMember, ...] = ()
+        #: A colleague said hello in the turn being processed. `give_floor` is registered SILENT so
+        #: its result never reaches the model — right after a question, where the candidate answers
+        #: next, but after a hello nobody is due to speak and the lead waits for a turn that never
+        #: comes. That is an interview that introduces everyone and then stops.
+        self.hellos_this_turn = False
+        # The in-person panel's colleagues say hello by themselves once the lead's opening is heard
+        # (`LiveAgentSpec.scripted_hellos`); their voices are made while the lead is still talking.
+        self.scripted_hellos = False
+        self.hello_voices: dict[str, asyncio.Task[bytes | None]] = {}
+        #: A hand-over refused because that colleague's share of questions is spent: their first
+        #: name and the question the lead wrote for them. Sent to the lead after the turn, for the
+        #: same reason as the hellos — nothing else wakes it, and the candidate is sitting in the
+        #: silence after a hand-over to somebody who never spoke.
+        self.declined_floor: tuple[str, str] | None = None
+        #: Every line a colleague has already said, normalised. The lead cannot hear them (we
+        #: speak them), so this is the only record that stops the same words twice — and it keys
+        #: on the words rather than on what the lead called them, because a line wrongly labelled
+        #: is still a line the candidate is waiting to hear.
+        self.colleague_lines: set[str] = set()
         self.panel_brief = ""
         self.lead_name = ""
         self.lead_voice = ""
-        self.colleagues_have_floor = False
+        self.may_end_early = False
+        # The early-end refusal is said once. Every note sent prompts a reply, and a model set on
+        # closing answers each one with another goodbye and another end request: a loop the
+        # candidate heard as "I'm sorry, we must conclude now" ten times over.
+        self.early_end_refused = False
+        self.fast_panel_voices = False
         self.drop_model_turn = False
-        self.lead_question_open = False
-        self.lead_answered = False
+        # A presentation's held floor (`LiveAgentSpec.hold_floor`); off unless the module asks for it.
+        self.hold_floor = False
+        self.hears_while_held = True
+        # `LiveAgentSpec.one_question_per_turn`: what the lead has said this turn, and questions put in it.
+        self.one_question_per_turn = False
+        self.lead_turn_text = ""
+        self.questions_this_turn = 0
+        # Whether the last finished turn put a question, and how long the user has spoken since.
+        self.last_turn_asked = False
+        self.answer_ms = 0
+        self.release_note = ""
+        self.opening_heard = False
+        # A reply the model began while the floor was held: discarded to its end, even past a release.
+        self.muted_turn = False
+        self.release_pending = False
+        # After a release: when the user last made a sound, the model's own first reply (its words
+        # so far, or None before it starts), and the task that sends the note if the model does not.
+        self.last_voice_at = 0.0
+        # When the model last finished a turn (for telling its late transcript from a new reply).
+        self.turn_done_at = 0.0
+        self.release_reply_text: str | None = None
+        self.release_task: asyncio.Task[None] | None = None
+        # Whether the audience has been heard since the release note (for its one reminder).
+        self.heard_since_note = True
+        self.events_since_note: dict[str, int] = {}
         self.lead_spoke_this_turn = False
-        self.lead_answer_ms = 0
         # From the hand-over until the colleague asks: the model's transcript of the answer it heard still counts.
-        self.late_answer_text = False
-        self.colleague_task: asyncio.Task[None] | None = None
-        self.listener: AnswerListener | None = None
         self.listener_done = asyncio.Event()
-        self.question_played = asyncio.Event()
-        self.awaited_turn = -1
+        self.turn_played: dict[int, asyncio.Event] = {}
         self.dialog: list[Line] = []
         self.asked: list[str] = []
         self.lead_questions: list[str] = []
@@ -366,7 +516,7 @@ class LiveGateway:
         await self.ws.accept()
         try:
             if origin and allowed and origin not in allowed:
-                raise _Closed(CloseCode.FORBIDDEN, "origin not allowed")
+                raise _Closed(CloseCode.FORBIDDEN, ForbiddenReason.ORIGIN)
             if not is_valid_id(self.session_id):
                 raise _Closed(CloseCode.NOT_FOUND)
             await self._authenticate()
@@ -408,6 +558,7 @@ class LiveGateway:
             raise _Closed(CloseCode.PROTOCOL_ERROR, "invalid auth message") from None
         try:
             self.user = await verify_credentials(auth.idToken, auth.appCheckToken, check_revoked=True)
+            self.hold_opening = auth.holdOpening
         except AppError:
             raise _Closed(CloseCode.UNAUTHENTICATED, "unauthenticated") from None
         uid_var.set(self.user.uid)
@@ -430,7 +581,7 @@ class LiveGateway:
             if self.session.get("status") not in (SessionStatus.CREATED.value, SessionStatus.LIVE.value):
                 raise _Closed(CloseCode.CONFLICT, "session is not open")
             if not self.user.verified_for_ai:
-                raise _Closed(CloseCode.FORBIDDEN, "email not verified")
+                raise _Closed(CloseCode.FORBIDDEN, ForbiddenReason.EMAIL_UNVERIFIED)
             await require_consents(self.user, ConsentKind.AI_PROCESSING, ConsentKind.RECORDING)
         except NotFound:
             raise _Closed(CloseCode.NOT_FOUND) from None
@@ -487,6 +638,18 @@ class LiveGateway:
         spec = replace(spec, resumption_handle=self.state.handle if resumed else None)
         self.panel = spec.panel
         self.panel_brief, self.lead_name, self.lead_voice = spec.panel_brief, spec.lead_name, spec.voice_name
+        self.may_end_early = spec.may_end_early
+        self.fast_panel_voices = spec.fast_panel_voices
+        self.scripted_hellos = spec.scripted_hellos and not resumed
+        self.hold_floor, self.hears_while_held = spec.hold_floor, spec.hears_while_held
+        self.one_question_per_turn = spec.one_question_per_turn
+        self.release_note = spec.release_note
+        # The opening is heard before the floor is held; after a reconnect it already was.
+        self.opening_heard = resumed
+        if self.scripted_hellos:
+            self.hello_voices = {
+                m.name: asyncio.create_task(self._voice(m.hello, m.voice)) for m in self.panel if m.hello
+            }
 
         mark("instruction")
         paths = StoragePaths(self.uid)
@@ -513,10 +676,17 @@ class LiveGateway:
         mark("marked_live")
         log.info("live prepare steps", extra={"steps": steps})
         if not resumed:
-            await self.conn.send_text(spec.opening_message)
+            opening: str | None = spec.opening_message
         elif self.state.handle is None:
             # Nothing to resume from on the model side: prompt it to pick the interview back up.
-            await self.conn.send_text(RESUME_MESSAGE)
+            opening = RESUME_MESSAGE
+        else:
+            opening = None
+        if self.hold_opening and not resumed:
+            # Connected early (the candidate is still on their way in): open when they sit down.
+            self.pending_opening = opening
+        elif opening is not None:
+            await self.conn.send_text(opening)
         self.connected_at = time.monotonic()
         await self.send_json(
             {
@@ -554,10 +724,6 @@ class LiveGateway:
             self.observing.cancel()
             with contextlib.suppress(BaseException):
                 await self.observing
-        if self.colleague_task is not None:
-            self.colleague_task.cancel()
-            with contextlib.suppress(BaseException):
-                await self.colleague_task
         if self.state is None or self.user is None:
             return
         try:
@@ -609,6 +775,15 @@ class LiveGateway:
                 if isinstance(control, ClientEnd):
                     self.end_reason = EndReason.CANDIDATE_ENDED
                     return
+                if isinstance(control, Release):
+                    await self._release()
+                    continue
+                if isinstance(control, Begin):
+                    opening, self.pending_opening = self.pending_opening, None
+                    if opening is not None:
+                        self.last_activity = time.monotonic()
+                        await self.conn.send_text(opening)
+                    continue
                 await self._on_control(control)
 
     async def _on_audio(self, data: bytes) -> None:
@@ -641,15 +816,27 @@ class LiveGateway:
             self.state.media_ms, frame.capture_ms + pcm_duration_ms(len(frame.pcm), SAMPLE_RATES[Track.CANDIDATE])
         )
         self.tracks[Track.CANDIDATE].append(frame.seq, frame.capture_ms, frame.pcm)
-        if self.listener is not None and self.listener.feed(frame.capture_ms, frame.pcm):
-            self.listener_done.set()
-        if self.colleagues_have_floor:
-            return  # the lead doesn't hear answers given to a colleague; it is told about them afterwards
-        if self.lead_question_open and not self.lead_answered and frame_rms(frame.pcm) >= SPEECH_RMS:
-            # Heard directly: the model's transcript of the answer often arrives after it starts replying.
-            self.lead_answer_ms += pcm_duration_ms(len(frame.pcm), SAMPLE_RATES[Track.CANDIDATE])
-            self.lead_answered = self.lead_answer_ms >= MIN_SPEECH_MS
+        if (self.hold_floor or self.one_question_per_turn) and frame_rms(frame.pcm) >= SPEECH_RMS:
+            self.last_voice_at = time.monotonic()
+            self.answer_ms += pcm_duration_ms(len(frame.pcm), SAMPLE_RATES[Track.CANDIDATE])
+        if self.pending_opening is not None:
+            return  # still on the way in: nothing is said to the interviewer before they sit down
+        if self.held and not self.hears_while_held:
+            return  # recorded for the feedback, but the audience does not hear the talk
         await self.conn.send_audio(frame.pcm)
+        # The model's own end-of-turn detection sometimes misses a quiet stop and leaves the
+        # candidate waiting in silence: after a real answer and a long pause, tell it they're done.
+        # Not before its first turn (the greeting is on its way), nor while a panel handover is due.
+        # A backstop for an end of turn the model missed, so nobody is left waiting in silence.
+        if (
+            self.turn_end.feed(frame.capture_ms, frame.pcm)
+            and not self.in_interviewer_turn
+            and not self.drop_model_turn
+            and not self.held
+            and self.state.interviewer_turn_seq > 0
+        ):
+            log.info("turn end note sent", extra={"sessionId": self.session_id})
+            await self.conn.send_text(TURN_END_NOTE)
 
     async def _on_control(
         self, control: PlaybackStarted | PlaybackStopped | CodeSnapshot | BoardImage | Ping
@@ -659,11 +846,15 @@ class LiveGateway:
             self.state.media_ms = max(self.state.media_ms, control.mediaMs)
         elif isinstance(control, PlaybackStarted):
             self.playback.setdefault(control.turnSeq, {})["start"] = control.mediaMs
+            if (received := self.turn_audio_at.pop(control.turnSeq, None)) is not None:
+                log.info("playback latency", extra={"data": {
+                    "turnSeq": control.turnSeq, "deliveryMs": control.mediaMs - received,
+                }})
             await self._update_interviewer_turn(control.turnSeq)
         elif isinstance(control, PlaybackStopped):
             self.playback.setdefault(control.turnSeq, {})["stop"] = control.mediaMs
-            if control.turnSeq == self.awaited_turn:
-                self.question_played.set()
+            if (played := self.turn_played.get(control.turnSeq)) is not None:
+                played.set()
             await self._update_interviewer_turn(control.turnSeq)
         elif isinstance(control, CodeSnapshot):
             self.last_activity = time.monotonic()
@@ -697,6 +888,15 @@ class LiveGateway:
             if not jpeg.startswith(b"\xff\xd8\xff") or len(jpeg) > MAX_BOARD_IMAGE_BYTES:
                 raise _Closed(CloseCode.PROTOCOL_ERROR, "invalid board image")
             self.last_board_image = now
+            # Kept for the evaluation: handwriting is the work in a board exam, and feedback
+            # that cannot see it can only judge what was said out loud.
+            if self.state.board_images < MAX_BOARD_IMAGES:
+                index = self.state.board_images
+                self.state.board_images += 1
+                with contextlib.suppress(Exception):
+                    await user_content().write(
+                        StoragePaths(self.uid).board_image(self.session_id, index), jpeg, "image/jpeg"
+                    )
             await self.conn.send_image(jpeg)
 
     # -- interviewer → client ------------------------------------------------
@@ -704,39 +904,54 @@ class LiveGateway:
     async def _downstream(self) -> None:
         assert self.conn is not None and self.state is not None
         async for event in self.conn.events():
+            if not self.heard_since_note:
+                # Diagnosis for a silent audience after the release: what the model did instead.
+                kind = type(event).__name__
+                self.events_since_note[kind] = self.events_since_note.get(kind, 0) + 1
             if isinstance(event, AudioOut):
-                if self.colleagues_have_floor or self.drop_model_turn:
-                    continue  # not heard: a colleague has the floor
-                if self._colleagues_are_next():
-                    self._hand_over_to_colleagues()
+                if self.held:
+                    self.muted_turn = True
+                if self.drop_model_turn or self.muted_turn:
                     continue
+                self.heard_since_note = True
+                self._own_reply_after_release("")
                 self.lead_spoke_this_turn = True
                 await self._on_interviewer_audio(event.pcm)
             elif isinstance(event, OutputText):
-                if self.colleagues_have_floor or self.drop_model_turn:
+                # The model is replying, so the candidate is plainly not still waiting: stand the
+                # backstop down now rather than at its deadline. Its transcript arrives with the
+                # first audio at the latest, and often before it — but it also keeps arriving during
+                # and just after a turn's audio. Those late words belong to the turn already heard:
+                # letting them stand the backstop down disarmed it for the candidate's next answer,
+                # and a missed end of turn then left the session silent for good.
+                if not self.in_interviewer_turn and time.monotonic() - self.turn_done_at > LATE_TRANSCRIPT_S:
+                    self.turn_end.settle()
+                if self.held:
+                    self.muted_turn = True
+                if self.drop_model_turn or self.muted_turn:
                     continue
+                self._own_reply_after_release(event.text)
+                self.lead_turn_text += event.text
                 self.interviewer_text.add(event.text, event.finished, self.state.media_ms)
                 await self.send_json({"type": "caption", "speaker": "interviewer", "text": event.text,
                                       "final": event.finished, "turnSeq": self.state.interviewer_turn_seq})
             elif isinstance(event, InputText):
-                if self.colleagues_have_floor and not self.late_answer_text:
-                    continue
                 if event.text.strip():
                     self.last_activity = time.monotonic()
-                    if self.lead_question_open:
-                        self.lead_answered = True
                     # The user is speaking, so the window for the model's (discarded) reply to
                     # a silent note is over: whatever it says next is an answer to them.
-                    if self.drop_model_turn and not self.colleagues_have_floor:
+                    if self.drop_model_turn:
                         self.drop_model_turn = False
                 self.candidate_text.add(event.text, event.finished, self.state.media_ms)
+                if self.held and event.finished and invites_questions(event.text):
+                    await self._release()
                 await self.send_json({"type": "caption", "speaker": "candidate", "text": event.text,
                                       "final": event.finished})
             elif isinstance(event, BoardWrite):
                 # Said out loud and written up: the student reads the numbers off the board.
                 await self.send_json({"type": "board_write", "text": event.text, "mediaMs": self.state.media_ms})
             elif isinstance(event, Interrupted):
-                if self.colleagues_have_floor or self.drop_model_turn or not self.in_interviewer_turn:
+                if self.drop_model_turn or self.muted_turn or self.held or not self.in_interviewer_turn:
                     # Nothing of the lead's is playing from this generation: queued panel turns keep playing.
                     continue
                 self.in_interviewer_turn = False
@@ -746,29 +961,70 @@ class LiveGateway:
                 if self.drop_model_turn:
                     self.drop_model_turn = False
                     continue
-                if self.colleagues_have_floor:
+                if self.muted_turn or self.held:
+                    # A reply to the talk, never heard. If the floor was handed over meanwhile, the
+                    # questions start now that it is out of the way.
+                    self.muted_turn = False
+                    if self.release_pending:
+                        self._start_release_task()
                     continue
-                if self.panel and not self.state.panel_greeted and self.in_interviewer_turn:
-                    await self._panel_hellos()
-                    continue
+                self.opening_heard = True
+                # The candidate's next answer starts now: the backstop is armed for it afresh.
+                self.turn_done_at = time.monotonic()
+                self.turn_end.reset()
+                self.last_turn_asked = "?" in self.lead_turn_text or self.questions_this_turn > 0
+                self.lead_turn_text, self.questions_this_turn, self.answer_ms = "", 0, 0
+                if self.release_reply_text is not None:
+                    # The model's own first reply after the release is over. A real question starts
+                    # the Q&A by itself; a filler does not, so the note follows it.
+                    said, self.release_reply_text = self.release_reply_text, None
+                    if self.release_pending:
+                        self.release_pending = False
+                        # A turn in which anyone asked (a colleague through give_floor too) started the
+                        # questions, however little the lead said itself.
+                        filler = len(said.split()) <= RELEASE_FILLER_WORDS and not self.last_turn_asked
+                        log.info("own reply after release", extra={"data": {"words": len(said.split()),
+                                                                             "noteFollows": filler}})
+                        if filler:
+                            await self._send_release_note()
+                opening = (self.state.interviewer_turn_seq, self.interviewer_turn_bytes // 48)
                 self.in_interviewer_turn = False
-                if self.panel and self.state.panel_greeted and self.lead_spoke_this_turn:
-                    # The lead has asked something: the colleagues come in once it's answered.
-                    self.lead_question_open, self.lead_answered, self.lead_answer_ms = True, False, 0
                 self.lead_spoke_this_turn = False
                 await self.send_json({"type": "turn_complete", "turnSeq": self.state.interviewer_turn_seq})
                 await self._flush_turns()
+                if self.hellos_this_turn:
+                    # After the turn, not after each hello: the lead may introduce several
+                    # colleagues in one breath, and it needs waking exactly once.
+                    self.hellos_this_turn = False
+                    await self.conn.send_text(hellos_done_note(self.state.panel_greeted))
+                elif self.declined_floor is not None:
+                    # A hand-over to a colleague with no turn left: the question comes back to the
+                    # lead, who is the only one who can fill the silence it just created.
+                    first_name, words = self.declined_floor
+                    self.declined_floor = None
+                    await self.conn.send_text(floor_declined_note(first_name, words))
+                if self.scripted_hellos:
+                    self.scripted_hellos = False
+                    await self._scripted_hellos(*opening)
             elif isinstance(event, ResumptionHandle):
                 self.state.handle = event.handle
             elif isinstance(event, Usage):
                 self.pending_tokens += event.total_tokens
                 self.pending_input_tokens += event.prompt_tokens
                 self.pending_output_tokens += event.response_tokens
-            elif isinstance(event, EndRequested):
-                if self.end_requested_at is None:
+            elif isinstance(event, EndRequested) and self.end_requested_at is None:
+                if self.held:
+                    log.info("end ignored: the user holds the floor")
+                elif not self.may_end_early and self.elapsed_ms() < self.max_duration_ms * MODEL_END_MIN_SHARE:
+                    log.info("early end ignored", extra={"elapsedMs": self.elapsed_ms(), "reason": event.reason})
+                    if not self.early_end_refused:
+                        self.early_end_refused = True
+                        await self.conn.send_text(EARLY_END_NOTE)
+                else:
                     self.end_requested_at = time.monotonic()
             elif isinstance(event, PanelTurn):
-                log.info("panel turn from the model ignored", extra={"purpose": event.purpose})
+                if not self.held:
+                    await self._colleague_speaks(event)
             elif isinstance(event, EngineError):
                 log.error("live engine error", extra={"engineCode": event.code})
                 raise _Closed(CloseCode.UNAVAILABLE, "interviewer unavailable")
@@ -782,6 +1038,16 @@ class LiveGateway:
             await self._flush_candidate_turn()
             self.state.interviewer_turn_seq += 1
             self.in_interviewer_turn = True
+            # How long the candidate waited for the model, on the media clock: from the end of their
+            # speech to the model's first audio (delivery to the speaker is logged on playback).
+            self.turn_audio_at[self.state.interviewer_turn_seq] = self.state.media_ms
+            if self.turn_end.last_speech_ms is not None:
+                log.info("reply latency", extra={"data": {
+                    "turnSeq": self.state.interviewer_turn_seq,
+                    "modelMs": self.state.media_ms - self.turn_end.last_speech_ms,
+                    "nudged": self.turn_end.fired,
+                }})
+            self.turn_end.reset()
             self.interviewer_chunk = 0
             self.interviewer_turn_bytes = 0
         turn = self.state.interviewer_turn_seq
@@ -793,31 +1059,54 @@ class LiveGateway:
 
     # -- panel ----------------------------------------------------------------
 
-    def _colleagues_are_next(self) -> bool:
-        """The lead is starting to reply to an answer to its own question: the colleagues ask first."""
-        return bool(
-            self.panel
-            and self.state is not None
-            and self.state.panel_greeted
-            and self.state.panel_questions < MAX_PANEL_QUESTIONS
-            and self.lead_question_open
-            and self.lead_answered
-            and not self.in_interviewer_turn
-            and self.colleague_task is None
-        )
-
-    def _hand_over_to_colleagues(self) -> None:
-        self.colleagues_have_floor = True
-        self.late_answer_text = True
-        self.drop_model_turn = True  # the lead's reply that just started is never played
-        self.lead_question_open = self.lead_answered = False
-        self.colleague_task = asyncio.create_task(self._colleagues_turn(), name="panel")
+    async def _scripted_hellos(self, opening_turn: int, spoken_ms: int) -> None:
+        """Everyone at the table says hello, in order, once the lead's welcome has been heard."""
+        assert self.state is not None
+        waiting = [m for m in self.panel if m.hello and m.name not in self.state.panel_greeted]
+        if not waiting:
+            return
+        await self._await_played(opening_turn, spoken_ms)
+        await self._settle_after(opening_turn, spoken_ms)
+        for member in waiting:
+            voiced = self.hello_voices.get(member.name)
+            said = await self._say(member.hello, member.voice, member, "hello", voiced=voiced)
+            if said is None:
+                continue
+            self.colleague_lines.add(normalize(member.hello))
+            self.state.panel_greeted.append(member.name)
+        if self.state.panel_greeted and self.conn is not None:
+            await self.conn.send_text(hellos_done_note(self.state.panel_greeted))
 
     async def _voice(self, text: str, voice: str) -> bytes | None:
         try:
-            return await speak_as_panelist(text, voice, SAMPLE_RATES[Track.INTERVIEWER])
+            return await speak_as_panelist(text, voice, SAMPLE_RATES[Track.INTERVIEWER], fast=self.fast_panel_voices)
         except AiUnavailable:
             return None
+
+    async def _await_played(self, turn: int, spoken_ms: int) -> None:
+        """Wait until the page reports `turn` has finished playing.
+
+        The model's TurnComplete says it stopped generating, not that anyone has heard the line:
+        the audio is streamed to the page in a burst and played from there, and a face speaks it
+        later still, on its own clock. Starting the next speaker on TurnComplete is what puts a
+        colleague's hello on top of the lead's question.
+
+        Every caller runs on the event loop that carries the model's own audio, so this is dead
+        time for the whole interview — wait too long and the interviewer simply stops talking. The
+        line's own length plus a few seconds is all the slack a lagging face can legitimately need;
+        past that the report is not coming, and `_settle_after` has already guaranteed the floor.
+        """
+        assert self.state is not None
+        if turn < 0 or "stop" in self.playback.get(turn, {}):
+            return
+        played = self.turn_played.setdefault(turn, asyncio.Event())
+        try:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    played.wait(), timeout=spoken_ms / 1000 + PLAYED_SLACK_S
+                )
+        finally:
+            self.turn_played.pop(turn, None)
 
     async def _say(
         self, text: str, voice: str, member: PanelMember | None, purpose: str | None = None,
@@ -829,8 +1118,23 @@ class LiveGateway:
         if pcm is None:
             return None
         if self.in_interviewer_turn:
+            # Whoever is speaking has not finished being heard. Streaming the next line now is what
+            # puts two of them on top of each other: each has its own face, each face runs behind
+            # our clock by its own amount, and the page hands the next face its audio on schedule
+            # regardless. So the next voice waits for the current one to actually stop.
+            open_turn = self.state.interviewer_turn_seq
             self.in_interviewer_turn = False
             await self._flush_turns()
+            # 24 kHz PCM16 is 48 bytes a millisecond, and the timeout counts a character as about
+            # 100 ms of speech — so bytes/4800 is this line's length in the units it wants.
+            spoken_ms = self.interviewer_turn_bytes // 48
+            waited_from = time.monotonic()
+            await self._await_played(open_turn, spoken_ms)
+            await self._settle_after(open_turn, spoken_ms)
+            log.info("waited for the floor", extra={"data": {
+                "turnSeq": open_turn, "spokenMs": spoken_ms,
+                "waitedMs": int((time.monotonic() - waited_from) * 1000),
+            }})
         if member is not None:
             await self.send_json({"type": "panel_speaker", "turnSeq": self.state.interviewer_turn_seq + 1,
                                   "name": member.name})
@@ -843,106 +1147,188 @@ class LiveGateway:
         await self.send_json({"type": "turn_complete", "turnSeq": turn})
         self.in_interviewer_turn = False
         await self._flush_turns(panelist=member.name if member else None, panel_purpose=purpose)
+        # Not said until it has been heard: whoever speaks next waits for this to play out.
+        await self._await_played(turn, len(pcm) // 48)
+        await self._settle_after(turn, len(pcm) // 48)
         return turn
 
-    async def _await_answer(self, listener: AnswerListener, question_turn: int, question_chars: int) -> str:
-        """Wait for the question to finish playing, then for the candidate's answer; returns its text."""
-        assert self.state is not None
-        try:
-            if "stop" not in self.playback.get(question_turn, {}):
-                self.awaited_turn = question_turn
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(self.question_played.wait(), timeout=20 + question_chars / 10)
-            stopped = self.playback.get(question_turn, {}).get("stop")
-            if listener.begin(int(stopped) if stopped is not None else self.state.media_ms):
-                self.listener_done.set()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self.listener_done.wait(), timeout=(MAX_ANSWER_MS + NO_ANSWER_MS) / 1000)
-        finally:
-            self.listener = None
-            self.awaited_turn = -1
-        if listener.speech_ms == 0:
-            return ""
-        try:
-            words = await transcribe_short(bytes(listener.pcm), sample_rate=SAMPLE_RATES[Track.CANDIDATE])
-        except SttFailed:
-            return ""
-        answer = " ".join(w.text for w in words).strip()
-        if answer:
-            self.last_activity = time.monotonic()
-            self.candidate_text.add(answer, True, self.state.media_ms)
-            await self._flush_candidate_turn()
-        return answer
+    async def _settle_after(self, turn: int, spoken_ms: int) -> None:
+        """Hold until `turn`'s audio has had time to be heard, however the page reported it.
 
-    async def _colleagues_turn(self) -> None:
-        """One colleague's turn: the lead hands over, the colleague asks, the candidate answers.
-
-        Colleagues take turns with the lead (lead, Daniel, lead, Grace, ...), so the panel
-        never piles several questions on the candidate at once.
+        `_await_played` is the accurate answer and this is the safe one: a line cannot be over
+        before its own audio has played, so from the moment it started there is a time before
+        which nobody else may speak. It costs nothing when the report was honest — the time has
+        already passed — and it is the whole protection when the report came early.
         """
-        assert self.state is not None and self.conn is not None
-        exchange: Exchange | None = None
-        lead_first = self.lead_name.split()[0] if self.lead_name else "Lead"
-        try:
-            if self.state.panel_questions >= MAX_PANEL_QUESTIONS:
-                return
-            member = self.panel[self.state.panel_questions % len(self.panel)]
-            line = await write_panel_line(self.uid, self.panel_brief, self.lead_name or "the lead interviewer",
-                                          member, self.dialog, self.asked)
-            # The question is voiced while the hand-over plays, so the colleague follows without a gap.
-            voiced = asyncio.create_task(self._voice(line.question, member.voice))
-            await self._say(line.handover, self.lead_voice, None)
-            self.late_answer_text = False
-            # Listen from before the question plays: an answer may start the moment it ends.
-            self.question_played.clear()
-            self.listener_done.clear()
-            listener = self.listener = AnswerListener()
-            turn = await self._say(line.question, member.voice, member, "question", voiced=voiced)
-            if turn is None:
-                self.listener = None
-                return
-            self.state.panel_questions += 1
-            self.asked.append(line.question)
-            if member.name not in self.state.panel_asked:
-                self.state.panel_asked.append(member.name)
-            answer = await self._await_answer(listener, turn, len(line.question))
-            exchange = Exchange(member, line.question, answer)
-        except Exception:
-            log.warning("panel turn failed", exc_info=True)
-        finally:
-            self.listener = None
-            self.late_answer_text = False
-            self.colleagues_have_floor = False
-            self.colleague_task = None
-            with contextlib.suppress(Exception):
-                if exchange is not None:
-                    await self.conn.send_text(catch_up_note(lead_first, [exchange], self.lead_questions))
-                elif self.state.panel_questions < MAX_PANEL_QUESTIONS:
-                    # The lead's reply was held back for a colleague who couldn't speak: let it go on.
-                    await self.conn.send_text(
-                        "[Session note, not from the candidate: react briefly to the candidate's last answer, "
-                        "then ask your next question.]"
-                    )
+        assert self.state is not None
+        started = self.playback.get(turn, {}).get("start")
+        if started is None:
+            return
+        behind = (started + spoken_ms + FACE_LAG_MARGIN_MS) - self.state.media_ms
+        if behind > 0:
+            await asyncio.sleep(min(behind, spoken_ms + FACE_LAG_MARGIN_MS) / 1000)
 
-    async def _panel_hellos(self) -> None:
-        """After the lead's introduction, each colleague says hello; then the lead asks its first question."""
-        assert self.state is not None and self.conn is not None
-        self.in_interviewer_turn = False
-        await self.send_json({"type": "turn_complete", "turnSeq": self.state.interviewer_turn_seq})
-        await self._flush_turns()
-        self.lead_spoke_this_turn = False
-        for member in self.panel:
-            if member.hello and member.name not in self.state.panel_greeted:
-                await self._say(member.hello, member.voice, member, "hello")
-            if member.name not in self.state.panel_greeted:
-                self.state.panel_greeted.append(member.name)  # even if their voice failed: never twice
-        names = " and ".join(m.first_name for m in self.panel)
-        await self.conn.send_text(
-            f"[Session note, not from the candidate: {names} have said hello. Now describe the format in one "
-            "sentence and ask your first question.]"
+    def _may_ask(self, member: PanelMember) -> bool:
+        """Whether this colleague still has a question of their own to put.
+
+        Only a panel whose shares have been decided is held to them. Where nobody has decided —
+        a panel on a video call — the lead shares the questioning out itself and a hand-over is
+        never refused, which is how that call has always run.
+        """
+        assert self.state is not None
+        if member.questions is None:
+            return True
+        return (
+            self.state.panel_asked.count(member.name) < member.questions
+            and self.state.panel_questions < MAX_PANEL_QUESTIONS
         )
 
-    # -- turn log -------------------------------------------------------------
+    def _panel_member(self, name: str) -> PanelMember | None:
+        """The colleague the lead named, matched on the first name it was given."""
+        wanted = name.strip().lower().split()[0] if name.strip() else ""
+        for member in self.panel:
+            if member.first_name.lower() == wanted or member.name.lower() == name.strip().lower():
+                return member
+        return None
+
+    @property
+    def held(self) -> bool:
+        """Whether the user holds the floor now: after the opening, until they take questions."""
+        return self.hold_floor and self.opening_heard and self.state is not None and not self.state.released
+
+    async def _release(self) -> None:
+        """The user takes questions: from now on the others speak, starting with the release note."""
+        if not self.hold_floor or self.state is None or self.state.released or self.conn is None:
+            return
+        self.state.released = True
+        log.info("floor released", extra={"sessionId": self.session_id})
+        if not self.release_note:
+            return
+        self.release_pending = True
+        if not self.muted_turn:
+            # (A reply to the talk still coming is discarded; the wait starts when it ends.)
+            self._start_release_task()
+
+    async def _send_release_note(self) -> None:
+        """The questions start: the note, and one reminder if the audience still says nothing."""
+        assert self.conn is not None
+        log.info("release note sent")
+        self.heard_since_note = False
+        self.events_since_note = {}
+        await self.conn.send_text(self.release_note)
+        self.release_task = asyncio.create_task(self._nudge_if_silent(), name="release-nudge")
+
+    async def _nudge_if_silent(self) -> None:
+        # The model sometimes answers a note with an empty turn: nothing said, the speaker left waiting.
+        try:
+            await asyncio.sleep(RELEASE_NUDGE_S)
+            if not self.heard_since_note and self.conn is not None:
+                log.info("release reminder sent", extra={"data": {
+                    "muted": self.muted_turn, "drop": self.drop_model_turn, "inTurn": self.in_interviewer_turn,
+                    "sinceVoiceS": round(time.monotonic() - self.last_voice_at, 1), "events": self.events_since_note,
+                }})
+                await self.conn.send_text(RELEASE_NUDGE)
+        except Exception:
+            log.warning("release reminder not sent", exc_info=True)
+
+    def _own_reply_after_release(self, text: str) -> None:
+        """The model is speaking after a release: while the note is pending, that is its own reply."""
+        if self.release_pending:
+            self.release_reply_text = (self.release_reply_text or "") + text
+
+    def _start_release_task(self) -> None:
+        if self.release_task is None or self.release_task.done():
+            self.release_task = asyncio.create_task(self._release_when_quiet(), name="release")
+
+    async def _release_when_quiet(self) -> None:
+        """Sends the release note once the user has finished, unless the model starts the questions itself."""
+        try:
+            # Polled: "quiet" is the absence of voice frames for a while, which no event announces.
+            while time.monotonic() - self.last_voice_at < RELEASE_QUIET_S or self.muted_turn:  # noqa: ASYNC110
+                await asyncio.sleep(0.2)
+            await asyncio.sleep(RELEASE_WAIT_S)
+            if self.release_pending and self.release_reply_text is None and self.conn is not None:
+                self.release_pending = False
+                await self._send_release_note()
+        except Exception:
+            log.warning("release note not sent", exc_info=True)
+
+    async def _colleague_speaks(self, turn: PanelTurn) -> None:
+        """A colleague says the words the lead just wrote for them, in their own voice.
+
+        This is the whole of a panel turn. There is no floor to take and give back: the answer
+        reaches the lead the way every other answer does — the candidate speaking into the same
+        session — and turn-taking is the model's own, the only judgement here that can tell a
+        finished answer from a pause in one.
+
+        What the lead does NOT get is the sound of its colleague: we speak those words, so they
+        never enter its own transcript, and `give_floor` is registered SILENT so no result wakes
+        it either. A lead with no record that Daniel spoke introduces him again and re-asks his
+        question. So what has been said is checked here, against the record the session already
+        keeps, and a repeat is dropped rather than spoken twice.
+        """
+        assert self.state is not None
+        member = self._panel_member(turn.colleague)
+        words = " ".join(turn.words.split())[:600]
+        if member is None or not words:
+            log.info("give_floor ignored", extra={"data": {"colleague": turn.colleague}})
+            return
+        # Only the same words twice are dropped. Dropping by label instead put a real question in
+        # the bin because the lead had marked it "hello" — the lead announced the colleague and
+        # nobody spoke, which is worse than any repetition.
+        if normalize(words) in self.colleague_lines:
+            log.info("repeat line dropped", extra={"data": {"colleague": member.name}})
+            return
+        # An introduction is the one thing a colleague does once. Asked for a second one, read the
+        # words: another greeting is dropped, and anything else is a question the lead mislabelled.
+        purpose = turn.purpose
+        if purpose == "hello" and member.name in self.state.panel_greeted:
+            if is_greeting(words, member.first_name):
+                log.info("second hello dropped", extra={"data": {"colleague": member.name}})
+                return
+            log.info("hello read as a question", extra={"data": {"colleague": member.name}})
+            purpose = "question"
+        # A greeting the lead labelled a question is still a greeting: say it once, and never
+        # again. Whoever has greeted has used up the only introduction they get.
+        elif purpose == "question" and is_greeting(words, member.first_name):
+            if member.name in self.state.panel_greeted:
+                log.info("second hello dropped", extra={"data": {"colleague": member.name}})
+                return
+            purpose = "hello"
+        if purpose == "question" and not self._may_ask(member):
+            # Their share is spent (for the note-taker, it never allowed a question at all). The
+            # lead is told after the turn, and asks it itself rather than leaving a gap.
+            log.info("panel question declined", extra={"data": {
+                "colleague": member.name, "asked": self.state.panel_asked.count(member.name),
+                "allowed": member.questions,
+            }})
+            self.declined_floor = (member.first_name, words)
+            return
+        if self.one_question_per_turn and purpose == "question":
+            if "?" in self.lead_turn_text or self.questions_this_turn:
+                # A question has already been put this turn: the user answers one thing at a time.
+                log.info("second question in a turn dropped", extra={"data": {"colleague": member.name}})
+                return
+            if self.last_turn_asked and self.answer_ms < MIN_ANSWER_MS:
+                # The last question has not been answered yet: a pause is not an answer.
+                log.info("question before an answer dropped", extra={"data": {
+                    "colleague": member.name, "answerMs": self.answer_ms}})
+                return
+        said = await self._say(words, member.voice, member, purpose)
+        if said is None:
+            return
+        self.heard_since_note = True
+        if purpose == "question":
+            self.questions_this_turn += 1
+        self.colleague_lines.add(normalize(words))
+        if purpose == "question":
+            self.asked.append(words)
+            self.state.panel_questions += 1
+            self.state.panel_asked.append(member.name)
+        if member.name not in self.state.panel_greeted:
+            self.state.panel_greeted.append(member.name)
+        if purpose == "hello":
+            self.hellos_this_turn = True
 
     async def _flush_candidate_turn(self) -> None:
         assert self.state is not None

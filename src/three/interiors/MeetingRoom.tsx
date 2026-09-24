@@ -10,9 +10,7 @@ import {
   SRGBColorSpace,
   type Texture,
 } from 'three'
-import { MEETING_ATTENDEE_IDS } from '@/data/meeting'
-import { useAppStore } from '@/state/useAppStore'
-import { People, PeopleBoundary, type SeatedPerson } from './people'
+import { SceneBoundary } from './boundary'
 
 /**
  * The small meeting room, dressed like a real one: a warm oak feature wall
@@ -45,20 +43,18 @@ const PROPS_URL = '/models/meeting/props.glb'
 const TEX = '/textures/meeting'
 
 /**
- * The attendees, turned toward the head of the table like the reference: one
- * each side of the far half, one at the far end. A yaw of 0 faces -z; π/2
- * faces -x, toward the presenter.
+ * The three places at the table: a chair and an open laptop each, one either
+ * side of the far half and one at the far end. A yaw of 0 faces -z; π/2 faces
+ * -x, toward the presenter.
+ *
+ * Nobody is modelled in them. People in this app are real footage and live
+ * faces, never 3D stand-ins, so the room is dressed and left empty.
  */
-const MEETING_SEATS: SeatedPerson[] = [
-  { id: MEETING_ATTENDEE_IDS[0], model: 'meet_2', x: -5.0, y: 0.52, z: -6.65, yaw: Math.PI * 0.72, role: 'panel', seed: 901 },
-  { id: MEETING_ATTENDEE_IDS[1], model: 'meet_1', x: -5.0, y: 0.52, z: -4.15, yaw: Math.PI * 0.28, role: 'panel', seed: 902 },
-  { id: MEETING_ATTENDEE_IDS[2], model: 'meet_3', x: -3.45, y: 0.52, z: -5.4, yaw: Math.PI / 2, role: 'panel', seed: 903 },
+const MEETING_PLACES: { x: number; z: number; yaw: number }[] = [
+  { x: -5.0, z: -6.65, yaw: Math.PI * 0.72 },
+  { x: -5.0, z: -4.15, yaw: Math.PI * 0.28 },
+  { x: -3.45, z: -5.4, yaw: Math.PI / 2 },
 ]
-/** The presenter's head, by posture — where the attendees look. Matches `poses.ts`. */
-const MEETING_EYE = {
-  standing: [-9.7, 1.65, -5.95] as [number, number, number],
-  sitting: [-9.15, 1.2, -5.4] as [number, number, number],
-}
 
 /** Empty chairs nearer the presenter, pushed back a little and turned. */
 const EMPTY_CHAIRS: { x: number; z: number; yaw: number }[] = [
@@ -356,8 +352,7 @@ function Architecture() {
 
 function Furnishings() {
   const { scene } = useGLTF(PROPS_URL, '/draco/') as unknown as { scene: Group }
-  const occupied = MEETING_SEATS.map((s) => ({ x: s.x, z: s.z, yaw: s.yaw }))
-  const chairs = [...occupied, ...EMPTY_CHAIRS]
+  const chairs = [...MEETING_PLACES, ...EMPTY_CHAIRS]
 
   return (
     <group>
@@ -366,11 +361,11 @@ function Furnishings() {
         <Prop key={i} scene={scene} name="chair" position={[c.x, 0, c.z]} rotation={c.yaw + Math.PI} />
       ))}
 
-      {/* Open laptops in front of each attendee, turned to them */}
-      {MEETING_SEATS.map((s) => {
+      {/* An open laptop at each place, turned to whoever sits there */}
+      {MEETING_PLACES.map((s, i) => {
         const lx = s.x + (TABLE.cx + 0.2 - s.x) * 0.0 + (s.z === TABLE.cz ? -0.55 : -0.15)
         const lz = s.z === TABLE.cz ? s.z : s.z + Math.sign(TABLE.cz - s.z) * 1.0
-        return <Prop key={s.id} scene={scene} name="laptop_open" position={[lx, TOP_Y, lz]} rotation={face(lx, lz, s.x, s.z)} />
+        return <Prop key={i} scene={scene} name="laptop_open" position={[lx, TOP_Y, lz]} rotation={face(lx, lz, s.x, s.z)} />
       })}
 
       {/* The presenter's place: a closed laptop, a notebook and pen */}
@@ -391,27 +386,19 @@ function Furnishings() {
 }
 
 export function MeetingRoom() {
-  const posture = useAppStore((s) => (s.session?.locationId === 'company' ? s.session.posture : undefined))
-  const eye = posture === 'sitting' ? MEETING_EYE.sitting : MEETING_EYE.standing
-
   return (
     <group>
       {/* A missing texture or prop must never take the whole building down. */}
-      <PeopleBoundary fallback={null}>
+      <SceneBoundary fallback={null}>
         <Suspense fallback={null}>
           <Architecture />
         </Suspense>
-      </PeopleBoundary>
-      <PeopleBoundary fallback={null}>
+      </SceneBoundary>
+      <SceneBoundary fallback={null}>
         <Suspense fallback={null}>
           <Furnishings />
         </Suspense>
-      </PeopleBoundary>
-      <PeopleBoundary fallback={null}>
-        <Suspense fallback={null}>
-          <People seats={MEETING_SEATS} lookAt={eye} activeZone="meeting" reportAudience={false} />
-        </Suspense>
-      </PeopleBoundary>
+      </SceneBoundary>
     </group>
   )
 }

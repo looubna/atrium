@@ -221,7 +221,11 @@ def test_a_spoken_exam_sits_at_a_desk_and_never_mentions_a_call() -> None:
         retry_competencies=[], avoid_questions=[], resumed=False,
     )
     assert "sitting across a desk" in text
-    assert "board" not in text.split("Topics this exam covers")[0].lower()
+    # The whiteboard beside the desk is for working, not for the conversation.
+    assert "whiteboard stands beside the desk" in text
+    assert "calculation, a derivation" in text and "write_on_board" in text
+    assert "Never write your conversational remarks" in text
+    assert "board exam" not in text
     assert "Prof. William Okonjo" in text
     assert "Navier-Stokes" in text
 
@@ -251,14 +255,23 @@ def test_a_resumed_exam_does_not_introduce_the_examiner_again() -> None:
         retry_competencies=[], avoid_questions=[], resumed=True,
     )
     assert "do not introduce" in text
-    assert "Start by greeting" not in text
+    assert "Start at once" not in text
 
 
-def test_only_a_board_exam_gets_the_writing_surface() -> None:
+def test_the_exam_starts_with_the_first_question_not_a_briefing() -> None:
+    for style in (ExamStyle.ORAL_QUESTIONS, ExamStyle.BOARD_WORK):
+        text = build_instruction(
+            _plan(style), examiner=examiner_for(style), retry_competencies=[], avoid_questions=[], resumed=False,
+        )
+        assert "Start at once" in text and "in the same turn" in text
+        assert "never ask whether the student is ready" in text
+
+
+def test_every_exam_has_the_writing_surface() -> None:
     factory = ExamLiveAgentFactory()
     assert factory.is_coding_session({"context": {"examStyle": ExamStyle.BOARD_WORK.value}})
-    assert not factory.is_coding_session({"context": {"examStyle": ExamStyle.ORAL_QUESTIONS.value}})
-    assert not factory.is_coding_session({"context": {}})
+    assert factory.is_coding_session({"context": {"examStyle": ExamStyle.ORAL_QUESTIONS.value}})
+    assert factory.is_coding_session({"context": {}})
 
 
 # -- catalogs ---------------------------------------------------------------
@@ -279,3 +292,25 @@ def test_parse_style_never_raises_on_junk() -> None:
     assert parse_style("board_work") is ExamStyle.BOARD_WORK
     assert parse_style("something else") is ExamStyle.UNKNOWN
     assert parse_style(None) is ExamStyle.UNKNOWN
+
+
+# -- the board the examiner writes on ---------------------------------------
+
+
+def test_every_examiner_is_given_the_board_to_write_on() -> None:
+    from app.modules.exam.agents.examiner import ExamLiveAgentFactory
+
+    factory = ExamLiveAgentFactory()
+    for style in (ExamStyle.BOARD_WORK, ExamStyle.ORAL_QUESTIONS, ExamStyle.UNKNOWN):
+        assert "write_on_board" in factory._tools_for(_plan(style))
+
+
+def test_the_examiner_is_told_to_write_the_numbers_up() -> None:
+    text = build_instruction(
+        _plan(ExamStyle.BOARD_WORK), examiner=examiner_for(ExamStyle.BOARD_WORK),
+        retry_competencies=[], avoid_questions=[], resumed=False,
+    )
+    assert "write_on_board" in text
+    assert "every number with its units" in text
+    # And that the working comes back as pictures, so it knows to read them.
+    assert "pictures of it" in text

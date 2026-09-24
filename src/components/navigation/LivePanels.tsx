@@ -16,22 +16,37 @@ const CONFIRM_LEAVE_MS = 4000
 /** The parts of a live session shared by the video call, the meeting room and the exam room. */
 
 /** Which kind of live session a screen is running: it only changes the words. */
-export type LiveKind = 'interview' | 'exam'
+export type LiveKind = 'interview' | 'exam' | 'debate'
 
 const FAILURE_TEXT: Record<LiveKind, Record<LiveFailure, string>> = {
   interview: {
     mic_denied: 'Microphone access is blocked. Allow it in Settings to talk with your interviewer.',
     unsupported: "This device can't run a live interview. Update your browser or iOS and try again.",
     forbidden: 'Accept recording and AI processing in your account before starting a live interview.',
+    email_unverified: 'Your email address is not verified yet. Open the link we sent you, then start the interview again.',
+    origin_blocked: 'This address is not allowed to open a live session. Open the app from an allowed address (ALLOWED_ORIGINS on the API).',
     not_found: 'This interview session no longer exists. Set it up again from the Company panel.',
     conflict: 'Another live interview is open, or this one has already finished.',
     quota: "You've used this month's live interview minutes.",
     unavailable: 'The interviewer is unavailable right now. Try again in a moment.',
   },
+  debate: {
+    mic_denied: 'Microphone access is blocked. Allow it in Settings to argue out loud.',
+    unsupported: "This device can't run a live debate. Update your browser or iOS and try again.",
+    forbidden: 'Accept recording and AI processing in your account before starting a debate.',
+    email_unverified: 'Your email address is not verified yet. Open the link we sent you, then start the debate again.',
+    origin_blocked: 'This address is not allowed to open a live session. Open the app from an allowed address (ALLOWED_ORIGINS on the API).',
+    not_found: 'This debate no longer exists. Set it up again from the University panel.',
+    conflict: 'Another live session is open, or this debate has already finished.',
+    quota: "You've used this month's live minutes.",
+    unavailable: 'Your opponent is unavailable right now. Try again in a moment.',
+  },
   exam: {
     mic_denied: 'Microphone access is blocked. Allow it in Settings to answer your examiner.',
     unsupported: "This device can't run a live exam. Update your browser or iOS and try again.",
     forbidden: 'Accept recording and AI processing in your account before starting a live exam.',
+    email_unverified: 'Your email address is not verified yet. Open the link we sent you, then start the exam again.',
+    origin_blocked: 'This address is not allowed to open a live session. Open the app from an allowed address (ALLOWED_ORIGINS on the API).',
     not_found: 'This exam no longer exists. Set it up again from the University panel.',
     conflict: 'Another live session is open, or this exam has already finished.',
     quota: "You've used this month's live minutes.",
@@ -117,7 +132,11 @@ export function LiveOverlay({
     return card(
       <>
         <h2 className="text-[15px] font-semibold text-chalk">
-          {kind === 'exam' ? "The exam couldn't continue" : "The interview couldn't continue"}
+          {kind === 'exam'
+            ? "The exam couldn't continue"
+            : kind === 'debate'
+              ? "The debate couldn't continue"
+              : "The interview couldn't continue"}
         </h2>
         <p className="mt-2 text-[12.5px] leading-relaxed text-mist">
           {FAILURE_TEXT[kind][state.failure ?? 'unavailable']}
@@ -132,13 +151,21 @@ export function LiveOverlay({
   if (state.phase === 'ended') {
     return card(
       <>
-        <div className="eyebrow">{kind === 'exam' ? 'Exam complete' : 'Interview complete'}</div>
+        <div className="eyebrow">
+          {kind === 'exam' ? 'Exam complete' : kind === 'debate' ? 'Debate over' : 'Interview complete'}
+        </div>
         <h2 className="mt-1 text-[16px] font-semibold text-chalk">
-          {kind === 'exam' ? "That's the end of your exam" : "Thanks — that's a wrap"}
+          {kind === 'exam'
+            ? "That's the end of your exam"
+            : kind === 'debate'
+              ? "That's the debate"
+              : "Thanks — that's a wrap"}
         </h2>
         <p className="mt-2 text-[12.5px] leading-relaxed text-mist">
           {state.endReason === 'time_limit'
-            ? `You reached the time limit for this ${kind === 'exam' ? 'exam' : 'round'}. `
+            ? `You reached the time limit for this ${
+                kind === 'exam' ? 'exam' : kind === 'debate' ? 'debate' : 'round'
+              }. `
             : state.endReason === 'quota_exhausted'
               ? "You've reached this month's live minutes. "
               : ''}

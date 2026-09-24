@@ -18,7 +18,7 @@ ToolName = Literal["end_interview", "give_floor", "write_on_board"]
 
 @dataclass(frozen=True, slots=True)
 class PanelMember:
-    """A colleague on a panel call who asks their own questions, in their own voice."""
+    """A colleague on a panel who speaks for themselves, in their own voice."""
 
     name: str
     role: str
@@ -27,10 +27,25 @@ class PanelMember:
     hello: str = ""
     # What their questions explore, in terms that fit any job.
     focus: str = ""
+    #: How many questions they may ask in the whole interview, or None for no declared share.
+    #:
+    #: A panel in a room is not a relay of equals: one person runs it and the others come in once
+    #: or twice. Left to itself the lead shares the questioning out evenly, which is the one thing
+    #: such a panel never does, so the share is set here and held to by the gateway. Zero is the
+    #: person who sits in to listen — they say hello and nothing else.
+    #:
+    #: None means nobody has decided: the lead shares the questioning out as it sees fit and the
+    #: gateway never refuses a hand-over. That is how a panel on a video call has always run and
+    #: how it stays — the share is something the meeting room asks for, not the default.
+    questions: int | None = None
 
     @property
     def first_name(self) -> str:
         return self.name.split()[0]
+
+    @property
+    def asks(self) -> bool:
+        return self.questions != 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,8 +56,11 @@ class LiveAgentSpec:
     opening_message: str
     voice_name: str = "Charon"
     language_code: str = "en-US"
-    # Candidates pause to think; a long silence window avoids cutting them off.
-    silence_duration_ms: int = 1200
+    # Candidates pause to think, and being asked a second question while still gathering an answer
+    # to the first is the worst thing the interviewer can do. So this is longer than it needs to be
+    # for a brisk reply: the gateway's own turn-end note (panel.py) is what keeps a finished answer
+    # from hanging, and it deliberately waits longer still so the two never both fire.
+    silence_duration_ms: int = 2000
     tools: tuple[ToolName, ...] = ("end_interview",)
     resumption_handle: str | None = None
     # Colleagues who speak for themselves; the gateway runs their turns (see panel.py).
@@ -51,6 +69,26 @@ class LiveAgentSpec:
     panel_brief: str = ""
     #: The lead interviewer's full name, as on the call.
     lead_name: str = ""
+    #: The colleagues introduce themselves as soon as the lead's opening has been heard, spoken by
+    #: the gateway from their `hello` lines (voiced in advance), instead of waiting for the lead to
+    #: hand them the floor. The in-person panel: a room where someone who never says hello is odd.
+    scripted_hellos: bool = False
+    #: Colleagues' lines are voiced by the fast text-to-speech (see `speak_as_panelist(fast=)`).
+    fast_panel_voices: bool = False
+    #: The model may end the session at any time. Off for interviews and exams, which must not stop
+    #: minutes in on a rude remark; on for a conversation the user closes by saying goodbye.
+    may_end_early: bool = False
+    #: The user holds the floor (a presentation): after the opening, nothing the model says reaches
+    #: them — no voice, no hand-over, no ending — until the page sends `release` (they take
+    #: questions), when `release_note` is sent to the model. Off for every other kind of session.
+    hold_floor: bool = False
+    #: While the floor is held, whether the model hears the user (and so knows the talk) or not.
+    hears_while_held: bool = True
+    release_note: str = ""
+    #: At most one question reaches the user per turn: a colleague's question in a turn where the lead
+    #: (or another colleague) already asked one is dropped, and so is one put before the user has
+    #: answered the last question at all. The prompt asks for this; models forget.
+    one_question_per_turn: bool = False
 
 
 @dataclass(frozen=True, slots=True)

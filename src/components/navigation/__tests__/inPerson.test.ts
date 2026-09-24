@@ -15,6 +15,7 @@ vi.stubGlobal('window', {
 const liveState = vi.hoisted(() => ({
   phase: 'idle',
   interviewerSpeaking: false,
+  leadVoicing: false,
   panelSpeaker: null as string | null,
   micLevel: 0,
   captions: [],
@@ -35,6 +36,10 @@ vi.mock('@/modules/interview/live/useLiveInterview', () => ({
     sendCodeSnapshot: vi.fn(),
   }),
 }))
+// Whether the face server is there today. Most of these tests are about the filmed room, which is
+// what the room falls back to when it is not.
+const faces = vi.hoisted(() => ({ unavailable: true }))
+vi.mock('@/platform/avatar/useAvatar', () => ({ useAvatar: () => ({ avatar: null, unavailable: faces.unavailable }) }))
 vi.mock('@/lib/useCamera', () => ({ useCamera: () => ({ stream: null, error: null }) }))
 
 const { useAppStore } = await import('@/state/useAppStore')
@@ -65,6 +70,7 @@ const html = () => {
 describe('in-person interview', () => {
   beforeEach(() => {
     liveState.phase = 'idle'
+    faces.unavailable = true
     useAppStore.setState({ view: 'interior', selectedId: 'company', interiorZone: 'door', session: session('panel') })
   })
 
@@ -77,11 +83,11 @@ describe('in-person interview', () => {
     }
   })
 
-  it('sends you through at reception: there is no face to wait for', () => {
+  it('waits at reception for the interviewer', () => {
     useAppStore.setState({ interiorZone: 'reception' })
     liveState.phase = 'connecting'
     const out = html()
-    expect(out).toContain('Cara is here. Follow them to the meeting room.')
+    expect(out).toContain('Evelyn is on the way down')
     expect(out).toContain('aria-label="Leave"')
   })
 
@@ -98,9 +104,96 @@ describe('in-person interview', () => {
     }
   })
 
+  it('films the room the panel is sitting in, on the empty-room photograph', () => {
+    useAppStore.setState({ interiorZone: 'meeting' })
+    liveState.phase = 'live'
+    const out = html()
+    // Every take of the same locked-off frame is mounted, on the photograph that is their poster,
+    // so the change between them is never a clip being fetched.
+    expect(out).toContain('/video/inperson/room/panel/landscape.mp4')
+    expect(out).toContain('/video/inperson/room/panel/landscape_lead.mp4')
+    expect(out).toContain('/video/inperson/room/panel/landscape_colleague.mp4')
+    expect(out).toContain('poster="/video/inperson/room/panel/landscape.jpg"')
+    // With a face server, one to one, the interviewer is at her own desk: the clip her live face is
+    // painted on; and the panel sits at its table, the clip their shared face is painted on.
+    faces.unavailable = false
+    useAppStore.setState({ session: session('one-to-one') })
+    expect(html()).toContain('/video/inperson/room/one_face/base.mp4')
+    useAppStore.setState({ session: session('panel') })
+    expect(html()).toContain('/video/inperson/room/panel_face/base.mp4')
+    expect(html()).not.toContain('/video/inperson/room/panel/landscape_lead.mp4')
+  })
+
+  it('runs the take of whoever has the floor, and only that one', () => {
+    useAppStore.setState({ interiorZone: 'meeting' })
+    liveState.phase = 'live'
+    const base = '/video/inperson/room/panel/landscape'
+    const running = (out: string) =>
+      [...out.matchAll(/<video[^>]*src="([^"]+)"[^>]*class="([^"]*)"/g)]
+        .filter(([, , css]) => css.includes('opacity-100'))
+        .map(([, src]) => src)
+
+    // Between turns the room listens.
+    expect(running(html())).toEqual([`${base}.mp4`])
+    // The lead asks a question: the take where the lead is talking.
+    liveState.leadVoicing = true
+    expect(running(html())).toEqual([`${base}_lead.mp4`])
+    liveState.leadVoicing = false
+    // The colleague comes in: the take where the colleague is talking.
+    liveState.panelSpeaker = 'Daniel Brooks'
+    expect(running(html())).toEqual([`${base}_colleague.mp4`])
+    // The note-taker says hello. Nobody filmed her talking, so the room keeps listening rather
+    // than putting the wrong person's mouth in motion.
+    liveState.panelSpeaker = 'Grace Lin'
+    expect(running(html())).toEqual([`${base}.mp4`])
+    liveState.panelSpeaker = null
+  })
+
+  it('draws nothing over the footage: no face is composited into a chair', () => {
+    useAppStore.setState({ interiorZone: 'meeting' })
+    liveState.phase = 'live'
+    liveState.leadVoicing = true
+    const out = html()
+    // A masked video pinned to a head box is what a pasted-on person looks like in the markup.
+    expect(out).not.toContain('mask-image')
+    expect(out).not.toContain('maskImage')
+    expect(out).not.toMatch(/<video[^>]*style="[^"]*clip-path/)
+    liveState.leadVoicing = false
+  })
+
+  it('names whoever takes a turn, without leaving the table', () => {
+    useAppStore.setState({ interiorZone: 'meeting' })
+    liveState.phase = 'live'
+    liveState.panelSpeaker = 'Grace Lin'
+    // She asks nothing all interview, but the candidate still hears her say hello, so the room
+    // still names her: a voice from the table with nobody's name on it is nobody.
+    expect(html()).toContain('Senior Team Member')
+    liveState.panelSpeaker = 'Daniel Brooks'
+    const out = html()
+    expect(out).toContain('Daniel Brooks')
+    expect(out).toContain('Team Lead')
+    // The room shot stays: nobody is cut to full screen, and nobody leaves the table.
+    expect(out).toContain('/video/inperson/room/panel/landscape.mp4')
+    liveState.panelSpeaker = null
+    liveState.leadVoicing = true
+    expect(html()).toContain('Evelyn Ross')
+    liveState.leadVoicing = false
+  })
+
+  it('is led by the woman actually sitting in the room, whatever the round is', () => {
+    useAppStore.setState({ interiorZone: 'meeting' })
+    liveState.phase = 'live'
+    liveState.leadVoicing = true
+    // The session is a case round, which on a call would be Cara Lindqvist. The room is one
+    // photograph, so the name under the frame has to belong to the woman in the chair.
+    expect(html()).toContain('Evelyn Ross')
+    expect(html()).not.toContain('Cara Lindqvist')
+    liveState.leadVoicing = false
+  })
+
   it('offers to begin the next round when already seated', () => {
     useAppStore.setState({ interiorZone: 'meeting', session: session('one-to-one') })
-    expect(html()).toContain('Begin with Cara')
+    expect(html()).toContain('Begin with Evelyn')
   })
 
   it('shows nothing for online interviews or elsewhere in the building', () => {

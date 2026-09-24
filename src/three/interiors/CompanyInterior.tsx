@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Instance, Instances } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { DoubleSide, type Group, MathUtils, type MeshStandardMaterial, Quaternion, Vector3 } from 'three'
@@ -6,9 +6,6 @@ import { useAppStore, type InteriorZone } from '@/state/useAppStore'
 import { P, TV } from '../palette'
 import { SkyDome, type SkyColors } from '../environment/SkyDome'
 import { SUN } from '../environment/Lighting'
-import { pick, rand } from '@/lib/utils'
-import { Crowd, type Person } from './crowd'
-import { AUDIENCE_CAST, FRONT_CAST, PANEL_CAST, People, PeopleBoundary, type SeatedPerson } from './people'
 import { Desk, IN, PottedPlant, TaskChair } from './furniture'
 import { MeetingRoom } from './MeetingRoom'
 
@@ -65,87 +62,15 @@ const SEATS = Array.from({ length: ROWS }, (_, row) =>
   SEAT_XS.map((x) => ({ x, y: row * RISE, z: FRONT_ROW_Z + row * ROW_DEPTH, row })),
 ).flat()
 
-/** The presenter's head, on stage — where the room looks. */
-const PRESENTER: [number, number, number] = [-0.05, 2.6, -40.6]
-
-const SKINS = ['#f3cfb3', '#e8b48f', '#d19a72', '#b07a52', '#8a5a3b', '#5e3b26'] as const
-const HAIRS = ['#1b1512', '#2e211a', '#4a3322', '#7a5431', '#b08a52', '#d8c29a', '#8e8a86', '#262630'] as const
-const TOPS = ['#e08a4f', '#2aa888', '#f4eee5', '#4a78ff', '#8b3a4a', '#6b6f7a', '#c9a44a', '#3d5a80', '#d4566b', '#5b8c5a', '#26365a'] as const
-const LEGS = ['#1f2633', '#3a4150', '#2f3a52', '#4b3f36', '#5b6270'] as const
-const SUITS = ['#1c2b4b', '#23262e', '#2f3a52'] as const
-const TIES = [IN.jade, '#c0392b', '#c9a44a', '#4a78ff'] as const
-const GOLD = '#c9a44a'
-
 /**
- * Most seats taken; the middle of the front row is VIPs — suits, ties and
- * jade badges — the people a presenter reads first.
- */
-const AUDIENCE: Person[] = SEATS.filter((s, i) => rand(i * 1.7 + 3) < (s.row === 0 ? 0.92 : 0.72)).map((s, i) => {
-  const seed = i + 1
-  const vip = s.row === 0 && Math.abs(s.x) < 6.5
-  return {
-    x: s.x,
-    y: s.y + 0.53,
-    z: s.z - 0.02,
-    yaw: 0,
-    skin: pick(seed * 2.3, SKINS),
-    hair: pick(seed * 3.7, HAIRS),
-    top: vip ? pick(seed * 1.3, SUITS) : pick(seed * 4.1, TOPS),
-    legs: vip ? '#1a2030' : pick(seed * 4.9, LEGS),
-    hairStyle: Math.floor(rand(seed * 6.1) * 4) as Person['hairStyle'],
-    tie: vip ? pick(seed * 8.2, TIES) : rand(seed * 5.5) < 0.12 ? pick(seed * 8.2, TIES) : undefined,
-    badge: vip ? IN.jade : undefined,
-    pose: 'lap',
-    seed,
-  }
-})
-
-/**
- * Five judges at the table in front of the stage; the chair sits in the middle.
+ * The panel's five places at the long desk on stage.
  * Seated close enough together that the whole panel fits a portrait phone.
  */
 const PANEL_XS = [-2.4, -1.2, 0, 1.2, 2.4]
+/** The chair's nameplate, picked out from the others. */
+const GOLD = '#c9a44a'
 /** The lectern, and the presenter just behind it: further back on a portrait screen. */
 const LECTERN_Z = { wide: HALL_BACK + 6.9, narrow: HALL_BACK + 4.1 }
-const PANEL: Person[] = PANEL_XS.map((x, i) => ({
-  x,
-  y: 0.47,
-  z: PANEL_SEAT_Z,
-  yaw: 0,
-  skin: SKINS[[1, 3, 0, 4, 2][i]],
-  hair: HAIRS[[0, 6, 1, 3, 5][i]],
-  top: i === 2 ? '#15203a' : SUITS[i % 3],
-  legs: '#1a2030',
-  hairStyle: ([1, 3, 0, 2, 1] as const)[i],
-  tie: i === 2 ? GOLD : TIES[i % 4],
-  badge: i === 2 ? GOLD : IN.jade,
-  pose: 'desk',
-  seed: 500 + i,
-}))
-
-const PEOPLE = [...PANEL, ...AUDIENCE]
-
-/**
- * The same seats, filled with the realistic cast: one model per panelist, the
- * two rows nearest the stage from the high-resolution front cast, the rest
- * cycling through the audience cast. Neighbours never share a model.
- */
-const SEATED: SeatedPerson[] = (() => {
-  const out: SeatedPerson[] = PANEL.map((p, i) => ({
-    id: i, model: PANEL_CAST[i], x: p.x, y: p.y, z: p.z, yaw: 0, role: 'panel' as const, seed: p.seed,
-  }))
-  AUDIENCE.forEach((p, i) => {
-    const row = Math.round((p.z + 0.02 - FRONT_ROW_Z) / ROW_DEPTH)
-    // Seat column 0–23 across the house (the aisle splits 11 | 12).
-    const col = Math.round((Math.abs(p.x) - 1.9) / 0.78) + (p.x < 0 ? 12 : 0)
-    // A lattice rather than a dice roll: the same outfit never sits beside,
-    // directly behind or diagonally behind itself.
-    const pool: readonly string[] = row <= 1 ? FRONT_CAST : AUDIENCE_CAST
-    const pick = row <= 1 ? (col * 3 + row * 2) % pool.length : (col * 5 + row * 3) % pool.length
-    out.push({ id: PANEL.length + i, model: pool[pick], x: p.x, y: p.y, z: p.z, yaw: 0, role: 'audience', seed: p.seed })
-  })
-  return out
-})()
 
 /** The same golden-hour sky as the city, seen through the glazing. */
 const SKY: SkyColors = {
@@ -876,12 +801,8 @@ function Auditorium() {
 
       <Seating />
       <PanelTable />
-      {/* Realistic people once the cast is built; the stylised crowd stands in until then. */}
-      <PeopleBoundary fallback={<Crowd people={PEOPLE} lookAt={PRESENTER} activeZone="theater" />}>
-        <Suspense fallback={<Crowd people={PEOPLE} lookAt={PRESENTER} activeZone="theater" />}>
-          <People seats={SEATED} lookAt={PRESENTER} activeZone="theater" />
-        </Suspense>
-      </PeopleBoundary>
+      {/* The house is dressed and empty. People in this app are real footage and live faces,
+          never 3D stand-ins: an audience is the footage in `public/video/theater`. */}
 
       {/* Stage with a jade lip light */}
       <mesh position={[0, 0.45, HALL_BACK + 4]} castShadow receiveShadow>

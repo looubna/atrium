@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { CATEGORIES, CATEGORY_ORDER, getLocation } from '@/data/locations'
 import { useCoarsePointer } from '@/lib/useMediaQuery'
 import { cn } from '@/lib/utils'
@@ -6,6 +6,7 @@ import { opensOwnScreen, useAppStore } from '@/state/useAppStore'
 import { preloadInterior } from '@/three/interiors/registry'
 import { Button } from '../ui/Button'
 import { IconArrowLeft, IconEnter, IconOrbit, IconPin, IconScroll } from '../ui/Icon'
+import { LanguageCenterIntro } from '../language/Intro'
 import { PracticePicker } from './PracticePicker'
 
 /** Resting state: how to drive the city, and what the colours mean. */
@@ -72,6 +73,15 @@ function HoverCard({ id }: { id: string }) {
   )
 }
 
+/** What the way-in button says, by where the session takes you. */
+const ENTER_LABEL: Record<string, string> = {
+  talk: 'Start conversation',
+  debate: 'Go to the debate',
+  exam: 'Go to your exam',
+  drill: 'Start drill',
+  call: 'Join video call',
+}
+
 /** Selected state: the location's identity, what it is for, and the way in. */
 function LocationCard({ id }: { id: string }) {
   const loc = getLocation(id)
@@ -79,6 +89,7 @@ function LocationCard({ id }: { id: string }) {
   const goToCity = useAppStore((s) => s.goToCity)
   const visited = useAppStore((s) => s.visited)
   const session = useAppStore((s) => s.session)
+  const [setupOpen, setSetupOpen] = useState(false)
 
   // Warm the interior chunk while the panel is being read.
   useEffect(() => {
@@ -114,31 +125,23 @@ function LocationCard({ id }: { id: string }) {
       </h2>
       <p className="mt-1.5 text-[13px] leading-relaxed text-mist">{loc.tagline}</p>
 
-      <PracticePicker location={loc} />
+      {loc.opens === 'language' ? <LanguageCenterIntro /> : <PracticePicker location={loc} onSetupChange={setSetupOpen} />}
 
       <div className="mt-5 flex items-center gap-2">
         <Button
           variant="primary"
           // These sessions need no interior: each opens its own screen.
-          disabled={!loc.hasInterior && !ownScreen}
+          disabled={!loc.hasInterior && !ownScreen && !loc.opens}
           onClick={enter}
-          className="flex-1"
-          title={loc.hasInterior || ownScreen ? undefined : 'Interior not built yet'}
+          // While a setup form is open it has its own Confirm: one green button at a time. City stays.
+          className={cn('flex-1', setupOpen && 'hidden')}
+          title={loc.hasInterior || ownScreen || loc.opens ? undefined : 'Interior not built yet'}
         >
           <IconEnter width={15} height={15} />
-          {destination === 'talk'
-            ? 'Start conversation'
-            : destination === 'exam'
-              ? 'Go to your exam'
-              : destination === 'drill'
-                ? 'Start drill'
-                : !loc.hasInterior
-                  ? 'Interior coming soon'
-                  : destination === 'call'
-                    ? 'Join video call'
-                    : 'Enter'}
+          {loc.opens === 'language' ? 'Open Language Center' : ENTER_LABEL[destination ?? ''] ??
+            (!loc.hasInterior ? 'Interior coming soon' : 'Enter')}
         </Button>
-        <Button variant="ghost" onClick={goToCity} aria-label="Back to city">
+        <Button variant="ghost" onClick={goToCity} aria-label="Back to city" className={cn(setupOpen && 'ml-auto')}>
           <IconArrowLeft width={15} height={15} />
           City
         </Button>
@@ -156,7 +159,16 @@ export function ContextPanel() {
   const selectedId = useAppStore((s) => s.selectedId)
   const hoveredId = useAppStore((s) => s.hoveredId)
 
-  if (view === 'interior' || view === 'exiting' || view === 'call' || view === 'drill' || view === 'talk' || view === 'exam')
+  if (
+    view === 'interior' ||
+    view === 'exiting' ||
+    view === 'call' ||
+    view === 'drill' ||
+    view === 'talk' ||
+    view === 'exam' ||
+    view === 'debate' ||
+    view === 'language'
+  )
     return null
 
   const mode = selectedId && view !== 'city' ? 'selected' : hoveredId ? 'hover' : 'idle'

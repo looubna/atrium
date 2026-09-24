@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import {
   NETWORKING_CLIPS,
   NETWORKING_CLOSEUP_BASE,
+  NETWORKING_FACES,
   NETWORKING_FRAME,
   NETWORKING_MEDIA_BASE,
   NETWORKING_PEOPLE,
@@ -10,8 +11,12 @@ import {
 import { NETWORKING_TAGS, type NetworkingTag } from '@/data/practice'
 import { cn } from '@/lib/utils'
 import { useVoiceActivity } from '@/lib/useVoiceActivity'
+import { useInterviewRoom } from '@/modules/interview/live/useInterviewRoom'
+import type { LiveFailure } from '@/modules/interview/live/useLiveInterview'
+import { createNetworkingSession } from '@/modules/networking/api'
 import { useAppStore } from '@/state/useAppStore'
 import { IconArrowLeft, IconMic, IconMicOff, IconUser } from '../ui/Icon'
+import { AvatarTile } from './AvatarTile'
 
 const [FW, FH] = NETWORKING_FRAME
 const ASPECT = FW / FH
@@ -138,52 +143,22 @@ function Tag({ person, scale, match, unknown, onOpen, disabled }: {
   )
 }
 
-/** How long the greeting takes to dissolve into the listening loop. */
-const GREETING_FADE_MS = 500
-
 /**
- * The guest face to face. On arrival the whole group turns to you and says hi, out
- * loud, once (`<id>_<orientation>_hi.mp4`); then they listen in a silent loop. The
- * loop waits underneath and the greeting dissolves into it, so where the generated
- * greeting doesn't end exactly on the loop's first frame, the hand-over stays soft.
+ * The guest face to face, listening in a silent loop; the guest greets out loud from the live
+ * conversation. A guest filmed for a live face (`NETWORKING_FACES`) is shown in the very clip the
+ * face server paints lips on, so when their face joins, it lands exactly over it.
  */
-function CloseUp({ person, landscape, shown, onMissing }: {
+function CloseUp({ person, landscape, shown, faced, onMissing, children }: {
   person: NetworkingPerson
   landscape: boolean
   shown: boolean
+  faced: boolean
   onMissing: () => void
+  children?: React.ReactNode
 }) {
-  const base = `${NETWORKING_CLOSEUP_BASE}/${person.id}_${landscape ? 'land' : 'port'}`
-  // 'greeting' → 'fading' (both playing) → 'listening' (greeting removed).
-  const [phase, setPhase] = useState<'greeting' | 'fading' | 'listening'>('greeting')
-  const hi = useRef<HTMLVideoElement>(null)
-  const listen = useRef<HTMLVideoElement>(null)
-
-  useEffect(() => {
-    setPhase('greeting')
-  }, [base])
-
-  useEffect(() => {
-    const v = hi.current
-    if (!v || phase !== 'greeting') return
-    // The tap on the tag allows sound; where the browser still refuses, greet silently.
-    v.muted = false
-    v.play().catch(() => {
-      v.muted = true
-      v.play().catch(() => setPhase('listening'))
-    })
-  }, [phase, base])
-
-  useEffect(() => {
-    if (phase === 'greeting') return
-    listen.current?.play().catch(() => {})
-    if (phase !== 'fading') return
-    const id = window.setTimeout(() => setPhase('listening'), GREETING_FADE_MS)
-    return () => window.clearTimeout(id)
-  }, [phase])
-
-  // The footage has a 15px black band on both long edges; scaling up past it hides it.
-  const fill = 'absolute inset-0 h-full w-full scale-[1.025] object-cover'
+  const base = faced
+    ? `${NETWORKING_CLOSEUP_BASE}/${person.id}_face`
+    : `${NETWORKING_CLOSEUP_BASE}/${person.id}_${landscape ? 'land' : 'port'}`
   return (
     <div
       aria-label="Conversation close-up"
@@ -191,34 +166,84 @@ function CloseUp({ person, landscape, shown, onMissing }: {
       style={{ transitionDuration: `${FADE_MS}ms` }}
     >
       <video
-        key={`${base}-listen`}
-        ref={listen}
+        key={base}
         src={`${base}.mp4`}
         poster={`${base}.jpg`}
+        autoPlay
         loop
         muted
         playsInline
         preload="auto"
         disablePictureInPicture
         onError={onMissing}
-        className={fill}
+        // The older footage has a 15px black band on both long edges; scaling up past it hides it.
+        className={cn('absolute inset-0 h-full w-full object-cover', !faced && 'scale-[1.025]')}
       />
-      {phase !== 'listening' && (
-        <video
-          key={`${base}-hi`}
-          ref={hi}
-          src={`${base}_hi.mp4`}
-          poster={`${base}.jpg`}
-          playsInline
-          disablePictureInPicture
-          onEnded={() => setPhase('fading')}
-          // No greeting for this guest: go straight to listening.
-          onError={() => setPhase('listening')}
-          className={cn(fill, 'transition-opacity', phase === 'fading' ? 'opacity-0' : 'opacity-100')}
-          style={{ transitionDuration: `${GREETING_FADE_MS}ms` }}
-        />
-      )}
+      {children}
     </div>
+  )
+}
+
+const FAILURE: Partial<Record<LiveFailure, string>> = {
+  mic_denied: 'Allow the microphone to talk.',
+  forbidden: 'Accept recording and AI processing in your account first.',
+  email_unverified: 'Verify your email address first.',
+  quota: "You've used this month's live minutes.",
+  conflict: 'Another live session is open.',
+}
+
+/**
+ * The conversation itself: the guest, played live, with their lip-synced face over the footage
+ * when they have one. It starts on arrival; the guest says hello first.
+ */
+function Conversation({ person, sessionId, faced, leaving, onEnded, onFailed }: {
+  person: NetworkingPerson
+  sessionId: string
+  faced: boolean
+  /** The user is walking away: the fade-out is playing and the conversation ends now. */
+  leaving: boolean
+  /** The guest said goodbye (or the time ran out). */
+  onEnded: () => void
+  onFailed: (why: string) => void
+}) {
+  const room = useInterviewRoom({ sessionId, camera: null, module: 'networking', faces: faced })
+  const { live, avatar, avatarFailed } = room
+  const { start } = live
+  const { phase, failure } = live.state
+  // A tick later, so a mount that is immediately undone (React's strict mode does exactly that)
+  // never begins: a start torn down half-way would hold off the real one until it gave up.
+  useEffect(() => {
+    const id = window.setTimeout(() => void start(), 0)
+    return () => window.clearTimeout(id)
+  }, [start])
+  // Told once per change of phase, whatever the parent re-renders in between.
+  const told = useRef({ onEnded, onFailed })
+  told.current = { onEnded, onFailed }
+  const first = person.name.split(' ')[0]
+  useEffect(() => {
+    if (phase === 'ended') told.current.onEnded()
+    if (phase === 'failed') told.current.onFailed(FAILURE[failure ?? 'unavailable'] ?? `${first} can't talk right now.`)
+  }, [phase, failure, first])
+  // Walking away ends the conversation on the server too, so it is recorded and scored. It has to
+  // be said while the socket is still open: unmounting tears it down first.
+  const { end } = live
+  useEffect(() => {
+    if (leaving) end()
+  }, [leaving, end])
+
+  if (!avatar || avatarFailed) return null
+  return (
+    <AvatarTile
+      variant="closeup"
+      renderer={avatar.renderer}
+      name={avatar.name}
+      role={avatar.role}
+      speaking={live.state.interviewerSpeaking}
+      shown
+      onLive={room.setFaceOnScreen}
+      onFailed={room.onAvatarFailed}
+      onEnded={room.onFaceEnded}
+    />
   )
 }
 
@@ -226,7 +251,13 @@ function CloseUp({ person, landscape, shown, onMissing }: {
  * A single slim row, low on the screen so the guest's face stays clear: the microphone
  * and time talking, who you are with, and a way out. The conversation starts on arrival.
  */
-function ConversationBar({ person, unknown, onLeave }: { person: NetworkingPerson; unknown: boolean; onLeave: () => void }) {
+function ConversationBar({ person, unknown, note, onLeave }: {
+  person: NetworkingPerson
+  unknown: boolean
+  /** Why there is no conversation, when there isn't one. */
+  note: string | null
+  onLeave: () => void
+}) {
   const voice = useVoiceActivity(true)
   const [seconds, setSeconds] = useState(0)
 
@@ -249,7 +280,9 @@ function ConversationBar({ person, unknown, onLeave }: { person: NetworkingPerso
       <span className="text-[12px] tabular-nums text-mist">
         {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}
       </span>
-      <span className="min-w-0 truncate text-[13px] font-medium text-chalk">{unknown ? 'A guest' : person.name}</span>
+      <span className="min-w-0 truncate text-[13px] font-medium text-chalk">
+        {note ?? (unknown ? 'A guest' : person.name)}
+      </span>
       <button
         type="button"
         onClick={onLeave}
@@ -273,6 +306,7 @@ export function NetworkingHall() {
   const zone = useAppStore((s) => s.interiorZone)
   const networking = useNetworking()
   const setSceneCovered = useAppStore((s) => s.setSceneCovered)
+  const openFeedback = useAppStore((s) => s.openFeedback)
   const active = view === 'interior' && zone !== 'door' && Boolean(networking)
 
   const root = useRef<HTMLDivElement>(null)
@@ -286,6 +320,10 @@ export function NetworkingHall() {
   const [pan, setPan] = useState<number | null>(null)
   const drag = useRef<{ x: number; pan: number; moved: boolean } | null>(null)
   const leaving = useRef<number | null>(null)
+  // The live conversation with the guest in focus: its session, whether the user is walking away,
+  // and why there is none (no network, no AI, no microphone). The last one ended is kept for feedback.
+  const [talk, setTalk] = useState<{ guest: string; sessionId: string | null; leaving: boolean; note: string | null } | null>(null)
+  const [lastTalk, setLastTalk] = useState<{ name: string; sessionId: string } | null>(null)
   const { clip, next, broken } = useHallClips()
 
   useEffect(() => {
@@ -296,6 +334,7 @@ export function NetworkingHall() {
     if (!active) {
       setFocus(null)
       setClose(false)
+      setTalk(null)
     }
   }, [active])
   useEffect(() => {
@@ -324,13 +363,37 @@ export function NetworkingHall() {
   const wanted = new Set(networking!.tags)
   const closeKey = focus ? `${focus.id}_${landscape ? 'land' : 'port'}` : ''
 
+  // The guest said goodbye: let the last words land, then step back into the hall.
+  const walkAwaySoon = () => {
+    if (leaving.current) return
+    leaving.current = window.setTimeout(() => {
+      leaving.current = null
+      walkAway()
+    }, 1500)
+  }
+
+  const walkUp = (p: NetworkingPerson) => {
+    setFocus(p)
+    setTalk({ guest: p.id, sessionId: null, leaving: false, note: null })
+    createNetworkingSession(p.id, !unknown)
+      .then(({ id }) => setTalk((t) => (t?.guest === p.id && !t.leaving ? { ...t, sessionId: id } : t)))
+      .catch(() =>
+        setTalk((t) => (t?.guest === p.id ? { ...t, note: `${p.name.split(' ')[0]} can't talk right now.` } : t)),
+      )
+  }
+
   const walkAway = () => {
-    // Fade the guest out, then the hall is back.
+    // Fade the guest out (the conversation ends meanwhile), then the hall is back.
     setClose(false)
+    setTalk((t) => {
+      if (t?.sessionId && focus) setLastTalk({ name: unknown ? 'a guest' : focus.name.split(' ')[0], sessionId: t.sessionId })
+      return t && { ...t, leaving: true }
+    })
     if (leaving.current) window.clearTimeout(leaving.current)
     leaving.current = window.setTimeout(() => {
       leaving.current = null
       setFocus(null)
+      setTalk(null)
     }, FADE_MS)
   }
 
@@ -395,7 +458,7 @@ export function NetworkingHall() {
               match={!unknown && wanted.has(p.kind)}
               disabled={Boolean(focus)}
               onOpen={() => {
-                if (!drag.current?.moved) setFocus(p)
+                if (!drag.current?.moved) walkUp(p)
               }}
             />
           ))}
@@ -408,8 +471,21 @@ export function NetworkingHall() {
           person={focus}
           landscape={landscape}
           shown={close}
+          faced={NETWORKING_FACES.has(focus.id)}
           onMissing={() => setMissing((m) => new Set(m).add(closeKey))}
-        />
+        >
+          {talk?.sessionId && talk.guest === focus.id && (
+            <Conversation
+              key={talk.sessionId}
+              person={focus}
+              sessionId={talk.sessionId}
+              faced={NETWORKING_FACES.has(focus.id)}
+              leaving={talk.leaving}
+              onEnded={walkAwaySoon}
+              onFailed={(note) => setTalk((t) => t && { ...t, note })}
+            />
+          )}
+        </CloseUp>
       )}
 
       {!focus && ready && (
@@ -419,7 +495,20 @@ export function NetworkingHall() {
         </div>
       )}
 
-      {focus && <ConversationBar key={focus.id} person={focus} unknown={unknown} onLeave={walkAway} />}
+      {!focus && ready && lastTalk && (
+        <button
+          type="button"
+          onClick={() => openFeedback(lastTalk.sessionId)}
+          className="glass anim-rise absolute inset-x-0 z-[36] mx-auto w-fit max-w-[94vw] rounded-full px-3.5 py-1.5 text-[12px] font-medium text-chalk hud-inset hover:text-white"
+          style={{ bottom: '3.75rem' }}
+        >
+          Feedback on your talk with {lastTalk.name} →
+        </button>
+      )}
+
+      {focus && (
+        <ConversationBar key={focus.id} person={focus} unknown={unknown} note={talk?.note ?? null} onLeave={walkAway} />
+      )}
     </div>
   )
 }

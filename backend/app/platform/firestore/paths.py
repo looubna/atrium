@@ -111,6 +111,18 @@ class UserPaths:
     def material(self, course_id: str, material_id: str) -> str:
         return f"{self.materials(course_id)}/{require_id(material_id)}"
 
+    def admission_preparations(self) -> str:
+        return f"{self.user()}/admissionPreparations"
+
+    def admission_preparation(self, prep_id: str) -> str:
+        return f"{self.admission_preparations()}/{require_id(prep_id)}"
+
+    def admission_materials(self, prep_id: str) -> str:
+        return f"{self.admission_preparation(prep_id)}/materials"
+
+    def admission_material(self, prep_id: str, material_id: str) -> str:
+        return f"{self.admission_materials(prep_id)}/{require_id(material_id)}"
+
     def exam_analyses(self, course_id: str) -> str:
         return f"{self.course(course_id)}/analyses"
 

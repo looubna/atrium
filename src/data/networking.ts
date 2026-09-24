@@ -8,6 +8,21 @@ import type { NetworkingTag } from './practice'
 export const NETWORKING_MEDIA_BASE = '/video/networking'
 /** Each guest face to face, `<id>_land` and `<id>_port` (.mp4 loop, .jpg first frame). */
 export const NETWORKING_CLOSEUP_BASE = '/video/networking/close'
+/**
+ * Guests filmed for a live, lip-synced face: on their own and close, facing the user, listening with
+ * a closed mouth, the people behind them standing still (`<id>_face.mp4` / `.jpg`, one landscape clip
+ * for both orientations). It is the same clip the face server paints the lips on, looped forward, so
+ * the footage and the live face line up exactly.
+ */
+export const NETWORKING_FACES: ReadonlySet<string> = new Set([
+  'marketing',
+  'product',
+  'analyst',
+  'director',
+  'founder',
+  'engineer',
+  'recruiter',
+])
 /** Pixel size of the footage the positions below are measured in. */
 export const NETWORKING_FRAME: [number, number] = [1672, 940]
 /** Listening loops, shuffled; any that are missing are skipped. */

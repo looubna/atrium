@@ -1,0 +1,37 @@
+./film.sh: line 5: [: buyer: binary operator expected
+./film.sh: line 13: $g/veo.log: ambiguous redirect
+grep: buyer: Is a directory
+grep: webcam/veo.log: No such file or directory
+==> buyer <==
+tail: webcam/veo.log: No such file or directory
+./film.sh: line 5: [: inv_lead: binary operator expected
+./film.sh: line 13: $g/veo.log: ambiguous redirect
+grep: inv_lead: Is a directory
+grep: webcam/veo.log: No such file or directory
+==> inv_lead <==
+tail: webcam/veo.log: No such file or directory
+./film.sh: line 5: [: inv_partner: binary operator expected
+./film.sh: line 13: $g/veo.log: ambiguous redirect
+grep: inv_partner: Is a directory
+grep: webcam/veo.log: No such file or directory
+==> inv_partner <==
+tail: webcam/veo.log: No such file or directory
+./film.sh: line 5: [: inv_associate: binary operator expected
+./film.sh: line 13: $g/veo.log: ambiguous redirect
+grep: inv_associate: Is a directory
+grep: webcam/veo.log: No such file or directory
+==> inv_associate <==
+tail: webcam/veo.log: No such file or directory
+./film.sh: line 5: [: buyer_room: binary operator expected
+./film.sh: line 13: $g/veo.log: ambiguous redirect
+grep: buyer_room: Is a directory
+grep: room/veo.log: No such file or directory
+==> buyer_room <==
+tail: room/veo.log: No such file or directory
+./film.sh: line 5: [: investor_room: binary operator expected
+./film.sh: line 13: $g/veo.log: ambiguous redirect
+grep: investor_room: Is a directory
+grep: panel/veo.log: No such file or directory
+==> investor_room <==
+tail: panel/veo.log: No such file or directory
+ALLDONE

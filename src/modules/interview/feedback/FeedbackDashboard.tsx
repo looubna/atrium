@@ -1,10 +1,12 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { IconCheck, IconChevronRight, IconClose, IconFile, IconMic, IconTarget, IconVideo } from '@/components/ui/Icon'
+import { ThinkingLogo } from '@/components/ui/ThinkingLogo'
 import { PRACTICE_FORMATS, type SessionSetup } from '@/data/practice'
 import { cn } from '@/lib/utils'
 import { ApiError } from '@/platform/api/client'
 import { saveFile } from '@/platform/native'
+import { ArgumentMapSection } from '@/modules/debate/feedback/ArgumentMap'
 import { useAppStore } from '@/state/useAppStore'
 import {
   fetchTranscript,
@@ -414,6 +416,9 @@ function Processing({ data, onReprocess, busy }: { data: FeedbackResponse; onRep
   const status = data.session.processingStatus
   const failed = status === 'failed'
   const reached = STEPS.findIndex((s) => s.status === status)
+  // Each finished step is real ground covered; the step in flight only claims
+  // its own start, so the number never runs ahead of the work.
+  const through = reached < 0 ? 0 : reached / (STEPS.length - 1)
   return (
     <div className="grid min-h-0 flex-1 place-items-center">
       <Card className="w-full max-w-sm">
@@ -430,21 +435,32 @@ function Processing({ data, onReprocess, busy }: { data: FeedbackResponse; onRep
             </Button>
           </>
         ) : (
-          <ol className="mt-4 flex flex-col gap-3">
-            {STEPS.map((step, i) => (
-              <li key={step.status} className="flex items-center gap-3 text-[13px]">
-                <span
-                  className={cn(
-                    'grid size-6 place-items-center rounded-full text-[11px]',
-                    i < reached ? 'bg-jade-500 text-ink-900' : i === reached ? 'animate-pulse bg-jade-500/30 text-jade-300' : 'bg-white/8 text-faint',
-                  )}
-                >
-                  {i < reached ? <IconCheck width={12} height={12} /> : i + 1}
-                </span>
-                <span className={i <= reached ? 'text-chalk' : 'text-faint'}>{step.label}</span>
-              </li>
-            ))}
-          </ol>
+          <>
+            <ThinkingLogo
+              layout="stack"
+              size={52}
+              className="mt-5"
+              progress={through}
+              done={status === 'completed'}
+              label="Working through your interview"
+              doneLabel="Feedback ready"
+            />
+            <ol className="mt-5 flex flex-col gap-3">
+              {STEPS.map((step, i) => (
+                <li key={step.status} className="flex items-center gap-3 text-[13px]">
+                  <span
+                    className={cn(
+                      'grid size-6 place-items-center rounded-full text-[11px]',
+                      i < reached ? 'bg-jade-500 text-ink-900' : i === reached ? 'bg-jade-500/30 text-jade-300' : 'bg-white/8 text-faint',
+                    )}
+                  >
+                    {i < reached ? <IconCheck width={12} height={12} /> : i + 1}
+                  </span>
+                  <span className={i <= reached ? 'text-chalk' : 'text-faint'}>{step.label}</span>
+                </li>
+              ))}
+            </ol>
+          </>
         )}
       </Card>
     </div>
@@ -655,10 +671,13 @@ function Report({
               </div>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <Button variant="primary" disabled={retrying} onClick={() => void retry()}>
-                {retrying ? 'Starting…' : 'Try again with new questions'}
-              </Button>
-              <Button variant="ghost" onClick={() => setTab('moments')}>
+              {/* A language conversation is practised again from the Language Center. */}
+              {data.session.module !== 'language' && (
+                <Button variant="primary" disabled={retrying} onClick={() => void retry()}>
+                  {retrying ? 'Starting…' : 'Try again with new questions'}
+                </Button>
+              )}
+              <Button variant="ghost" className={cn(data.session.module === 'language' && 'col-span-2')} onClick={() => setTab('moments')}>
                 Review moments
               </Button>
             </div>
@@ -701,7 +720,7 @@ function Report({
                 <span className="grid size-10 place-items-center rounded-2xl bg-jade-500/15 text-jade-400">
                   <IconMic width={18} height={18} />
                 </span>
-                <span className="text-[13px] font-medium text-chalk">Your interview recording</span>
+                <span className="text-[13px] font-medium text-chalk">{data.session.module === 'language' ? 'Your conversation recording' : 'Your interview recording'}</span>
               </div>
             )}
             <div className="p-4">
@@ -802,6 +821,11 @@ function Report({
 
           {tab === 'overview' && (
             <>
+              {/* A debate is judged on how the argument went, so the map of it comes first:
+                  every mark on it was recorded while the debate ran. */}
+              {data.session.module === 'debate' && (
+                <ArgumentMapSection sessionId={sessionId} onSeek={seek} />
+              )}
               {focus.length > 0 && (
                 <Card>
                   <SectionTitle title="Start with these" subtitle="Your biggest opportunities, and the drill that trains each one" icon={<IconTarget width={16} height={16} />} />
@@ -1012,9 +1036,23 @@ function FeedbackScreen({ sessionId, onClose }: { sessionId: string; onClose: ()
     >
       <header className="mx-auto flex w-full max-w-6xl items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[10.5px] font-semibold tracking-[0.16em] text-jade-400">INTERVIEW FEEDBACK</div>
+          <div className="text-[10.5px] font-semibold tracking-[0.16em] text-jade-400">
+            {data?.session.module === 'debate'
+              ? 'DEBATE FEEDBACK'
+              : data?.session.module === 'exam'
+                ? 'EXAM FEEDBACK'
+                : data?.session.module === 'language'
+                  ? 'LANGUAGE FEEDBACK'
+                  : 'INTERVIEW FEEDBACK'}
+          </div>
           <div className="mt-0.5 truncate text-[15px] font-semibold text-chalk">
-            {String(data?.session.context.roundTitle ?? 'Behavioral interview')}
+            {String(
+              data?.session.context.roundTitle ??
+                (data?.session.context.scene as { title?: string } | undefined)?.title ??
+                data?.session.context.motion ??
+                data?.session.context.subject ??
+                (data?.session.module === 'debate' ? 'Debate' : 'Behavioral interview'),
+            )}
           </div>
         </div>
         <Button variant="icon" aria-label="Close feedback" onClick={onClose}>

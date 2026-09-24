@@ -1,6 +1,7 @@
 import {
   CloseCode,
   FATAL_CLOSE_CODES,
+  ForbiddenReason,
   decodeServerAudio,
   encodeAudioFrame,
   parseServerMessage,
@@ -35,13 +36,20 @@ export type LiveStatus = 'connecting' | 'live' | 'reconnecting' | 'ended' | 'fai
 export interface LiveClientHandlers {
   onMessage: (message: ServerMessage) => void
   onAudio: (audio: ServerAudio) => void
-  onStatus: (status: LiveStatus, closeCode?: number) => void
+  /**
+   * `closeReason` is the gateway's own words for why it closed (`ForbiddenReason` and friends).
+   * A code alone cannot be turned into a sentence: 4403 is both "verify your address" and
+   * "accept recording", which are different things for the candidate to do.
+   */
+  onStatus: (status: LiveStatus, closeCode?: number, closeReason?: string) => void
 }
 
 export interface LiveClientOptions extends LiveClientHandlers {
   url: string
   idToken: (forceRefresh: boolean) => Promise<string>
   appCheckToken: () => Promise<string | undefined>
+  /** Connect now, but the interviewer opens only after `begin()` (the candidate is still on their way in). */
+  holdOpening?: boolean
   /** Injectable for tests. */
   createSocket?: (url: string) => WebSocket
 }
@@ -57,9 +65,12 @@ export class LiveClient {
   private closedByUs = false
   private ended = false
   private forceTokenRefresh = false
+  /** An ID token minted before the address was verified is refused once, and only once. */
+  private reclaimedToken = false
   private readonly buffer = new FrameRingBuffer(120) // ~12 s at 100 ms frames
   private lastAckSeq = -1
   private ready = false
+  private begun = false
 
   constructor(private readonly options: LiveClientOptions) {}
 
@@ -78,7 +89,14 @@ export class LiveClient {
           this.options.appCheckToken(),
         ])
         this.forceTokenRefresh = false
-        socket.send(JSON.stringify({ type: 'auth', idToken: token, appCheckToken: attest ?? null }))
+        socket.send(
+          JSON.stringify({
+            type: 'auth',
+            idToken: token,
+            appCheckToken: attest ?? null,
+            holdOpening: this.options.holdOpening ?? false,
+          }),
+        )
       } catch {
         socket.close()
       }
@@ -102,6 +120,8 @@ export class LiveClient {
         for (const frame of this.buffer.after(message.lastSeq)) {
           socket.send(encodeAudioFrame(frame.seq, frame.captureMs, frame.pcm))
         }
+        // A reconnect lands on a fresh gateway that holds the opening again until told.
+        if (this.begun) socket.send(JSON.stringify({ type: 'begin' }))
         this.options.onStatus('live')
       }
       if (message.type === 'ended') this.ended = true
@@ -112,21 +132,34 @@ export class LiveClient {
       if (this.socket !== socket) return
       this.socket = null
       if (this.ended || event.code === CloseCode.NORMAL) {
-        this.options.onStatus('ended', event.code)
+        this.options.onStatus('ended', event.code, event.reason)
         return
       }
       if (this.closedByUs) return
       if (FATAL_CLOSE_CODES.has(event.code)) {
-        this.options.onStatus('failed', event.code)
+        // Verifying an address does not reach into a token already minted: the claim the gateway
+        // reads stays false until the next one. So this close is fatal to the socket but not to
+        // the session — mint a token again and try once, rather than telling someone who has just
+        // verified their address to go and verify it.
+        if (event.code === CloseCode.FORBIDDEN && event.reason === ForbiddenReason.EMAIL_UNVERIFIED && !this.reclaimedToken) {
+          this.reclaimedToken = true
+          this.forceTokenRefresh = true
+          this.options.onStatus('reconnecting', event.code, event.reason)
+          setTimeout(() => {
+            if (!this.closedByUs && !this.ended) this.connect()
+          }, backoffMs(0))
+          return
+        }
+        this.options.onStatus('failed', event.code, event.reason)
         return
       }
       if (event.code === CloseCode.UNAUTHENTICATED) this.forceTokenRefresh = true
       if (this.attempts >= MAX_RECONNECT_ATTEMPTS) {
-        this.options.onStatus('failed', event.code)
+        this.options.onStatus('failed', event.code, event.reason)
         return
       }
       const delay = backoffMs(this.attempts++)
-      this.options.onStatus('reconnecting', event.code)
+      this.options.onStatus('reconnecting', event.code, event.reason)
       setTimeout(() => {
         if (!this.closedByUs && !this.ended) this.connect()
       }, delay)
@@ -153,6 +186,13 @@ export class LiveClient {
     socket.onclose = null
     socket.close(1000)
     this.connect()
+  }
+
+  /** The candidate is in place: the interviewer may open. Idempotent; repeated after reconnects. */
+  begin(): void {
+    if (this.begun) return
+    this.begun = true
+    this.send({ type: 'begin' })
   }
 
   end(): void {
