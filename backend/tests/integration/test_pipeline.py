@@ -227,6 +227,26 @@ async def test_with_the_video_consent_the_ai_reviews_each_flagged_moment(
     (tilt,) = report["findings"]
     assert tilt["review"]["verdict"] == "confirmed" and tilt["review"]["howToFix"]
 
+    feedback = (await api_client.get(f"/api/v1/sessions/{sid}/feedback", headers=as_user(uid))).json()
+    shown = feedback["bodyLanguage"]
+    assert [f["check"] for f in shown["findings"]] == ["posture_tilt"]
+    assert shown["exercises"]["level-shoulders"]["sources"]
+    compare = (await api_client.get(f"/api/v1/sessions/{sid}/body-language/compare", headers=as_user(uid))).json()
+    assert compare["previous"] is None and compare["current"]["metrics"]["tiltPct"] > 0
+
+    # A second session, framed the same way and level throughout, is compared with the first.
+    later = "sess00000014"
+    await seed_session(db, uid, later)
+    await api_client.put(f"/api/v1/sessions/{later}/media/face-metrics", headers=as_user(uid),
+                         json={"seconds": [{**second, "tilt": 0.0} for second in timeline], "poseHz": 4})
+    await enqueue_session_processing(uid, later, "interview")
+    assert await drain(queue) == ["done", "done", "done"]
+    compare = (await api_client.get(f"/api/v1/sessions/{later}/body-language/compare", headers=as_user(uid))).json()
+    assert compare["previous"]["sessionId"] == sid
+    assert compare["current"]["metrics"]["tiltPct"] == 0
+    assert (await api_client.get(f"/api/v1/sessions/{later}/body-language/compare",
+                                 headers=as_user("mallory"))).status_code == 404
+
 
 async def test_second_attempt_records_improvement_delta(db: firestore.AsyncClient, queue: RecordingQueue) -> None:
     for sid in ("sess00000001", "sess00000002"):

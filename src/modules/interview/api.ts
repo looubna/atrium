@@ -102,7 +102,78 @@ export interface FeedbackResponse {
   events: FeedbackEvent[]
   transcriptUrl?: string
   competencyNames?: Record<string, string>
+  /** Body-language findings (`backend/app/platform/media/body.py`); null when none were recorded. */
+  bodyLanguage?: BodyLanguageReport | null
 }
+
+export type BodyCheck =
+  | 'posture_tilt'
+  | 'turned_away'
+  | 'head_lower'
+  | 'repeated_gesture'
+  | 'gesture_timing'
+  | 'look_away'
+  | 'sway'
+
+export interface BodyFinding {
+  id: string
+  check: BodyCheck
+  /** `measured`: a geometric fact. `heuristic`: a pattern read from those facts. */
+  kind: 'measured' | 'heuristic'
+  startMs: number
+  endMs: number
+  observation: string
+  measurements: Record<string, number>
+  confidence: 'high' | 'medium' | 'low'
+  exerciseId: string
+  scenario: string
+  /** The AI's look at this moment of the video, with the video-analysis consent. */
+  review?: { verdict: 'confirmed' | 'not_seen' | 'unclear'; whatISee: string; howToFix: string }
+}
+
+export interface BodyExercise {
+  id: string
+  title: string
+  steps: string[]
+  why: string
+  evidence: string
+  sources: { citation: string; url: string }[]
+}
+
+export interface BodyLanguageReport {
+  version: number
+  quality: {
+    trackedSeconds: number
+    bodyVisiblePct: number
+    handsVisiblePct: number
+    clearPct: number
+    framing: 'none' | 'face_only' | 'upper_body' | 'full_body'
+    poseHz: number
+  }
+  checks: Record<BodyCheck, { status: 'measured' | 'unsupported'; reason?: string }>
+  metrics: Record<string, number>
+  findings: BodyFinding[]
+  exercises: Record<string, BodyExercise>
+}
+
+export interface BodyHistoryEntry {
+  sessionId: string
+  at: string
+  module: string
+  framing: string
+  findingCount: number
+  metrics: Record<string, number>
+}
+
+export interface BodyComparison {
+  current: BodyHistoryEntry
+  previous: BodyHistoryEntry | null
+  first: BodyHistoryEntry | null
+  sessions: number
+}
+
+export const compareBodyLanguage = (sessionId: string) =>
+  api<BodyComparison>(`/sessions/${sessionId}/body-language/compare`)
 
 export interface TranscriptSegment {
   id: string

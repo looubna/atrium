@@ -26,6 +26,7 @@ import {
   type Severity,
   type TranscriptSegment,
 } from '../api'
+import { BodyLanguageSection } from './BodyLanguageSection'
 import { ExampleAudioButton } from './ExampleAudio'
 import { practiceFor, type PracticeLink } from './practiceLinks'
 
@@ -88,7 +89,7 @@ const STEPS: { status: ProcessingStatus; label: string }[] = [
   { status: 'completed', label: 'Feedback ready' },
 ]
 
-type Tab = 'overview' | 'moments' | 'skills' | 'transcript'
+type Tab = 'overview' | 'moments' | 'body' | 'skills' | 'transcript'
 
 // -- building blocks ---------------------------------------------------------------------------
 
@@ -493,6 +494,7 @@ function Report({
   const currentSession = useAppStore((s) => s.session)
 
   const names = data.competencyNames ?? {}
+  const body = data.bodyLanguage ?? null
   const summary = data.session.summary
   const scores = useMemo(() => summary?.scores ?? [], [summary])
   const durationMs = Math.max(1, data.session.media.durationMs)
@@ -764,6 +766,21 @@ function Report({
                     style={{ left: `${(event.timestampStart / durationMs) * 100}%`, background: SEVERITY[event.severity].color }}
                   />
                 ))}
+                {/* Body-language moments: small diamonds, so they read apart from the spoken moments. */}
+                {body?.findings.map((finding) => (
+                  <button
+                    key={finding.id}
+                    type="button"
+                    title={`${formatClock(finding.startMs)} · Body language`}
+                    aria-label={`Jump to ${formatClock(finding.startMs)}: body language`}
+                    onClick={() => {
+                      seek(finding.startMs)
+                      setTab('body')
+                    }}
+                    className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#a78bfa] ring-2 ring-ink-900 transition-transform hover:scale-125"
+                    style={{ left: `${(finding.startMs / durationMs) * 100}%` }}
+                  />
+                ))}
               </div>
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
                 <span className="flex items-center gap-3 text-faint">
@@ -794,11 +811,19 @@ function Report({
 
         {/* Right: what to work on. */}
         <div className="flex min-w-0 flex-col gap-4">
-          <div role="tablist" aria-label="Feedback sections" className="sticky top-0 z-10 grid grid-cols-4 gap-1 rounded-2xl border border-white/8 bg-[#0b0f16]/90 p-1 backdrop-blur">
+          <div
+            role="tablist"
+            aria-label="Feedback sections"
+            className={cn(
+              'sticky top-0 z-10 grid gap-1 rounded-2xl border border-white/8 bg-[#0b0f16]/90 p-1 backdrop-blur',
+              body ? 'grid-cols-5' : 'grid-cols-4',
+            )}
+          >
             {(
               [
                 ['overview', 'Overview'],
                 ['moments', `Moments · ${data.events.length}`],
+                ...(body ? [['body', `Body · ${body.findings.length}`]] : []),
                 ['skills', 'Skills'],
                 ['transcript', 'Transcript'],
               ] as [Tab, string][]
@@ -818,6 +843,8 @@ function Report({
               </button>
             ))}
           </div>
+
+          {tab === 'body' && body && <BodyLanguageSection sessionId={sessionId} report={body} onSeek={seek} />}
 
           {tab === 'overview' && (
             <>

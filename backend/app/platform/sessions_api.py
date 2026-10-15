@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -21,8 +22,10 @@ from app.platform.clients import clients
 from app.platform.firestore.paths import UserPaths, job_path, new_id, require_id
 from app.platform.jobs.pipeline import PREPARE, enqueue_step
 from app.platform.jobs.processing import session_job_id
+from app.platform.media.body_exercises import EXERCISES
 from app.platform.ratelimit import rate_limit
 from app.platform.sessions import ProcessingStatus
+from app.platform.storage.objects import user_content
 from app.platform.storage.paths import StoragePaths
 from app.platform.storage.signing import signed_get_url, verify_local_signature
 from app.platform.usage import Metric, Period, UsageService
@@ -113,6 +116,61 @@ async def get_feedback(session_id: str, user: current_user) -> dict[str, Any]:
         "events": events,
         "transcriptUrl": transcript_url,
         "competencyNames": names,
+        "bodyLanguage": await _body_language(user.uid, session_id) if data.get("bodyLanguage") else None,
+    }
+
+
+#: How far back the before/after comparison looks for an earlier session with the same framing.
+BODY_HISTORY_LOOKBACK = 50
+
+
+@router.get("/{session_id}/body-language/compare")
+async def compare_body_language(session_id: str, user: current_user) -> dict[str, Any]:
+    """This session's body-language numbers next to the previous and the first comparable session.
+
+    Comparable means framed the same way (face only, upper body, whole body): a check measured on a
+    different view of the body is not the same measurement.
+    """
+    session_id = require_id(session_id)
+    db, paths = clients.firestore(), UserPaths(user.uid)
+    current = (await db.document(paths.body_history_entry(session_id)).get()).to_dict()
+    if not current:
+        raise NotFound()
+
+    def view(entry: dict[str, Any]) -> dict[str, Any]:
+        return {k: entry.get(k) for k in ("sessionId", "at", "module", "framing", "findingCount", "metrics")}
+
+    query = (
+        db.collection(paths.body_history())
+        .order_by("at", direction=firestore.Query.DESCENDING)
+        .limit(BODY_HISTORY_LOOKBACK)
+    )
+    earlier = [
+        entry async for snap in query.stream()
+        if (entry := snap.to_dict() or {}).get("framing") == current.get("framing")
+        and entry.get("sessionId") != session_id and entry.get("at") and current.get("at")
+        and entry["at"] < current["at"]
+    ]
+    return {
+        "current": view(current),
+        "previous": view(earlier[0]) if earlier else None,
+        "first": view(earlier[-1]) if len(earlier) > 1 else None,
+        "sessions": len(earlier) + 1,
+    }
+
+
+async def _body_language(uid: str, session_id: str) -> dict[str, Any] | None:
+    """The session's body-language report as shown: withdrawn findings left out, each exercise included."""
+    try:
+        report = json.loads(await user_content().read(StoragePaths(uid).body_language(session_id)))
+    except (FileNotFoundError, ValueError):
+        return None
+    findings = [f for f in report.get("findings") or [] if (f.get("review") or {}).get("verdict") != "not_seen"]
+    ids = {str(f.get("exerciseId")) for f in findings}
+    return {
+        **report,
+        "findings": findings,
+        "exercises": {i: EXERCISES[i].to_dict() for i in sorted(ids) if i in EXERCISES},
     }
 
 
