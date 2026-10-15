@@ -7,6 +7,7 @@ directory on disk, so the live gateway and pipeline run without Google Cloud.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 from pathlib import Path
@@ -38,6 +39,10 @@ class ObjectStore(Protocol):
     async def list(self, prefix: str) -> list[str]: ...
 
     async def delete_prefix(self, prefix: str) -> int: ...
+
+    async def delete(self, name: str) -> None:
+        """Remove one object; one that is already gone is not an error."""
+        ...
 
     async def size(self, name: str) -> int | None:
         """Object size in bytes, or None when it doesn't exist."""
@@ -96,6 +101,13 @@ class GcsObjectStore:
             return len(blobs)
 
         return await asyncio.to_thread(delete)
+
+    async def delete(self, name: str) -> None:
+        def remove() -> None:
+            with contextlib.suppress(GcsNotFound):
+                self._blob(name).delete()
+
+        await asyncio.to_thread(remove)
 
     async def size(self, name: str) -> int | None:
         def stat() -> int | None:
@@ -170,6 +182,9 @@ class LocalObjectStore:
         for name in names:
             self._path(name).unlink(missing_ok=True)
         return len(names)
+
+    async def delete(self, name: str) -> None:
+        self._path(name).unlink(missing_ok=True)
 
     async def size(self, name: str) -> int | None:
         path = self._path(name)

@@ -165,3 +165,14 @@ def test_the_opening_can_be_held_until_the_candidate_sits_down() -> None:
     # Clients that don't ask get the interviewer straight away, as before.
     assert parse_auth('{"type": "auth", "idToken": "t"}').holdOpening is False
     assert isinstance(parse_control('{"type": "begin"}'), Begin)
+
+
+async def test_local_store_deletes_one_object_and_nothing_sharing_its_name(tmp_path: Path) -> None:
+    store = LocalObjectStore("bucket", tmp_path)
+    await store.write("u/a/material.pdf", b"x", "application/pdf")
+    await store.write("u/a/material.pdf.txt", b"y", "text/plain")
+    await store.delete("u/a/material.pdf")
+    await store.delete("u/a/material.pdf")  # already gone: not an error
+    assert await store.list("u/a/") == ["u/a/material.pdf.txt"]
+    with pytest.raises(ValueError):
+        await store.delete("../escape")

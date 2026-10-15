@@ -48,7 +48,7 @@ module "platform" {
     TEXT_MODEL              = "gemini-3.8-flash"
     TEXT_LOCATION           = "global"
     SPEECH_LOCATION         = "us"
-    FREE_LIVE_MINUTES_MONTH = "120"
+    FREE_TRIAL_MINUTES      = "20" # live minutes a free account gets once
   }
 }
 

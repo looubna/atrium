@@ -58,8 +58,12 @@ def _keyed(value: str) -> str:
 
 
 def client_ip(forwarded_for: str | None, peer: str | None) -> str | None:
-    """The caller's public address: the first X-Forwarded-For hop (Cloud Run's front end sets it)."""
-    candidate = (forwarded_for or "").split(",")[0].strip() or (peer or "")
+    """The caller's public address: the last X-Forwarded-For hop.
+
+    Google's front end appends the address it was called from; anything before it was sent by the
+    client and can be anything, so the first hop would let one phone claim a new network each time.
+    """
+    candidate = (forwarded_for or "").split(",")[-1].strip() or (peer or "")
     try:
         address = ipaddress.ip_address(candidate)
     except ValueError:
@@ -70,7 +74,7 @@ def client_ip(forwarded_for: str | None, peer: str | None) -> str | None:
 
 async def _email(uid: str) -> str:
     try:
-        return (await run_in_threadpool(auth.get_user, uid)).email or ""
+        return (await run_in_threadpool(auth.get_user, uid, clients.firebase_app())).email or ""
     except Exception:  # the check is best-effort; never block on it
         return ""
 

@@ -35,7 +35,29 @@ from scipy.signal import firwin, lfilter
 from avatars.audio_features.base_asr import BaseASR
 from avatars.base_avatar import AudioFrameData
 from server.session_manager import MaxSessionError, session_manager
-from utils.image import read_imgs
+from utils.image import read_imgs as _upstream_read_imgs
+from concurrent.futures import ThreadPoolExecutor
+
+#: Frames read at once when a face is loaded. On Cloud Run the faces sit in Cloud Storage (a mounted bucket)
+#: where each file takes ~0.2 s to open, so upstream's CPU-sized pool (8 on 4 vCPUs) needed ~30 s per face and
+#: the page gave up waiting. Reading many at once brings a face in within a few seconds; on a local disk
+#: it changes nothing.
+READ_WORKERS = int(os.environ.get("ATRIUM_READ_WORKERS", "64"))
+
+
+def read_imgs(img_list):
+    """utils.image.read_imgs, with a pool sized for network storage instead of for the CPU count."""
+    if len(img_list) < 2:
+        return _upstream_read_imgs(img_list)
+    with ThreadPoolExecutor(max_workers=READ_WORKERS) as pool:
+        return list(pool.map(cv2.imread, img_list))
+
+
+try:  # the MuseTalk face loader imported upstream's version by name: point it at this one
+    import avatars.musetalk_avatar as _musetalk_avatar
+    _musetalk_avatar.read_imgs = read_imgs
+except Exception:  # noqa: BLE001 - another model: its loader keeps upstream's reader
+    pass
 from utils.logger import logger
 
 SECRET = os.environ.get("ATRIUM_SECRET", "").encode()
@@ -80,6 +102,9 @@ AVATAR_ROOT = os.path.join("data", "avatars")
 #: session's first seconds; with nothing in hand every late batch starves Chrome of audio, and
 #: Chrome stretches the voice to fill the gap, which is heard as a buzz. Re-established after a stall.
 CUSHION_S = float(os.environ.get("ATRIUM_CUSHION_S", "0.4"))
+#: The cushion for a face with several people in it (the in-person panel room): its renderer runs as
+#: close to real time as any, but the room is where a dip was heard, so it holds a little more.
+ROOM_CUSHION_S = float(os.environ.get("ATRIUM_ROOM_CUSHION_S", "0.7"))
 #: How far behind the pacing clock a frame may be before the clock is moved rather than caught up.
 LATE_RESET_S = float(os.environ.get("ATRIUM_LATE_RESET_S", "0.08"))
 SILENT = 1  # LiveTalking's audiotype for silence
@@ -105,7 +130,12 @@ IDLE_STOP_S = float(os.environ.get("ATRIUM_IDLE_STOP_S", "0"))
 #: it, which holds that candidate's picture back by seconds.
 PRELOAD = [a.strip() for a in os.environ.get("ATRIUM_PRELOAD", "").split(",") if a.strip()]
 
+#: A face opened by /atrium/offer whose page never connects its audio socket within this many
+#: seconds (the app closed during set-up) is closed, so it neither holds a slot nor keeps the VM up.
+UNATTACHED_S = float(os.environ.get("ATRIUM_UNATTACHED_S", "120"))
+
 _owners: dict[str, str] = {}  # sessionid -> avatar id it was opened for
+_opened: dict[str, float] = {}  # sessionid -> when it was opened, until its audio socket attaches
 _last_active = time.monotonic()
 _preloaded: list[str] = []
 _state_frames: dict[tuple[str, str], list] = {}
@@ -181,9 +211,11 @@ def _stamp_frames() -> None:
         # One epoch per session, set by whichever track is pulled first, so both are paced
         # against the same origin instead of each starting its own.
         player = self._player
+        face = getattr(player, "_HumanPlayer__container", None)
+        cushion = ROOM_CUSHION_S if getattr(face, "_faces", None) else CUSHION_S
         epoch = getattr(player, "_atrium_epoch", None)
         if epoch is None:
-            epoch = player._atrium_epoch = time.time() - media + CUSHION_S
+            epoch = player._atrium_epoch = time.time() - media + cushion
         wait = epoch + media - time.time()
         if wait < -LATE_RESET_S:
             # The renderer fell behind (a session's first seconds run below 25 fps). Sending the
@@ -191,8 +223,8 @@ def _stamp_frames() -> None:
             # jitter buffers — by different amounts for sound and picture, so the lips drift off the
             # voice and stay off. Moving the shared epoch instead delays both tracks by the stall,
             # together, and pacing carries on smoothly from here.
-            epoch = player._atrium_epoch = time.time() - media + CUSHION_S
-            wait = CUSHION_S
+            epoch = player._atrium_epoch = time.time() - media + cushion
+            wait = cushion
         if wait > 0:
             await asyncio.sleep(wait)
 
@@ -420,16 +452,10 @@ async def offer(request):
     if avatar is None or not _safe_avatar(avatar):
         return web.json_response({"code": 401, "msg": "invalid token"}, status=401)
 
-    session_params = {"avatar": avatar}
-    listening = _state_dir(avatar, "listening")
-    if listening:
-        # Writing notes is the default silent clip; other states are swapped in on request.
-        session_params["custom_config"] = json.dumps([{"audiotype": SILENT, "imgpath": listening}])
-
     from aiortc import RTCSessionDescription
     rtc = request.app["rtc_manager"]
     try:
-        sessionid = await session_manager.create_session(session_params)
+        sessionid = await session_manager.create_session(_session_params(avatar))
     except MaxSessionError as e:
         return web.json_response({"code": 503, "msg": str(e)}, status=503)
     pc = await rtc._create_pc_and_answer(
@@ -437,9 +463,127 @@ async def offer(request):
         RTCSessionDescription(sdp=params["sdp"], type=params["type"]),
     )
     _owners[sessionid] = avatar
+    _opened[sessionid] = time.monotonic()
     _touch()
     logger.info("atrium offer sessionid=%s avatar=%s", sessionid, avatar)
     return web.json_response({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type, "sessionid": sessionid})
+
+
+def _session_params(avatar: str) -> dict:
+    session_params = {"avatar": avatar}
+    listening = _state_dir(avatar, "listening")
+    if listening:
+        # Writing notes is the default silent clip; other states are swapped in on request.
+        session_params["custom_config"] = json.dumps([{"audiotype": SILENT, "imgpath": listening}])
+    return session_params
+
+
+# ── Cloud Run ────────────────────────────────────────────────────────────────────────────────────
+# On Cloud Run the offer and the audio must travel on ONE connection: two requests may be routed to
+# two different instances, and only one of them would hold the face. And there is no inbound UDP, so
+# the video goes through the TURN relay the page already uses (Cloudflare, TLS on 443): the page sends
+# its ICE servers with the offer and both ends meet at the relay. /atrium/offer + /atrium/audio stay
+# exactly as they were for the VMs.
+
+#: Preferred relay URLs, best first: TLS on 443 passes every firewall, and TCP is what Cloud Run egress
+#: is sure to carry. aiortc uses a single TURN server, so exactly one URL is kept.
+_RELAY_ORDER = ("turns:", "transport=tcp", "turn:")
+
+
+def _relay_server(ice_servers):
+    """The one TURN server (with its credentials) aiortc should use, picked from the page's list."""
+    from aiortc import RTCIceServer
+    candidates = []
+    for server in ice_servers if isinstance(ice_servers, list) else []:
+        if not isinstance(server, dict) or not server.get("username"):
+            continue
+        urls = server.get("urls")
+        for url in [urls] if isinstance(urls, str) else list(urls or []):
+            if isinstance(url, str) and url.startswith(("turn:", "turns:")):
+                rank = next((i for i, key in enumerate(_RELAY_ORDER) if key in url), len(_RELAY_ORDER))
+                if url.startswith("turns:") and ":443" in url:
+                    rank = -1
+                candidates.append((rank, url, server))
+    if not candidates:
+        return None
+    _, url, server = min(candidates, key=lambda c: c[0])
+    return RTCIceServer(urls=url, username=server["username"], credential=server.get("credential", ""))
+
+
+async def _relayed_pc(rtc, avatar_session, sessionid, offer, relay):
+    """rtc_manager._create_pc_and_answer, with the relay as the peer's ICE server."""
+    from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCRtpSender
+    from server.webrtc import HumanPlayer
+
+    servers = [RTCIceServer(urls=rtc.opt.stun)] + ([relay] if relay else [])
+    pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=servers))
+    rtc.pcs.add(pc)
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        logger.info("Connection state is %s", pc.connectionState)
+        if pc.connectionState in ("failed", "closed"):
+            await pc.close()
+            rtc.pcs.discard(pc)
+            session_manager.remove_session(sessionid)
+
+    player = HumanPlayer(avatar_session)
+    pc.addTrack(player.audio)
+    pc.addTrack(player.video)
+    capabilities = RTCRtpSender.getCapabilities("video")
+    preferences = [c for c in capabilities.codecs if c.name == "H264"]
+    preferences += [c for c in capabilities.codecs if c.name == "VP8"]
+    preferences += [c for c in capabilities.codecs if c.name == "rtx"]
+    pc.getTransceivers()[1].setCodecPreferences(preferences)
+    await pc.setRemoteDescription(offer)
+    await pc.setLocalDescription(await pc.createAnswer())
+    return pc
+
+
+async def session(request):
+    """One face over one WebSocket: {offer, iceServers} in, {answer} out, then the audio as /atrium/audio."""
+    avatar = verify(request.query.get("token", ""), request.app["opt"].avatar_id)
+    if avatar is None or not _safe_avatar(avatar):
+        return web.json_response({"code": 401, "msg": "invalid token"}, status=401)
+    ws = web.WebSocketResponse(heartbeat=30)
+    await ws.prepare(request)
+    try:
+        first = await ws.receive(timeout=30)
+        message = json.loads(first.data) if first.type == WSMsgType.TEXT else {}
+    except (asyncio.TimeoutError, ValueError):
+        message = {}
+    if message.get("type") != "offer" or not message.get("sdp"):
+        await ws.close(code=4400, message=b"expected an offer")
+        return ws
+
+    from aiortc import RTCSessionDescription
+    rtc = request.app["rtc_manager"]
+    try:
+        sessionid = await session_manager.create_session(_session_params(avatar))
+    except MaxSessionError:
+        await ws.send_json({"type": "busy"})
+        await ws.close(code=4503, message=b"busy")
+        return ws
+    avatar_session = session_manager.get_session(sessionid)
+    try:
+        pc = await _relayed_pc(rtc, avatar_session, sessionid,
+                               RTCSessionDescription(sdp=message["sdp"], type="offer"),
+                               _relay_server(message.get("iceServers")))
+    except Exception:  # noqa: BLE001 - a peer that cannot be built frees the slot for the next page
+        logger.exception("atrium session could not answer")
+        session_manager.remove_session(sessionid)
+        await ws.close(code=4500, message=b"no answer")
+        return ws
+    _owners[sessionid] = avatar
+    _opened[sessionid] = time.monotonic()
+    _touch()
+    logger.info("atrium session sessionid=%s avatar=%s", sessionid, avatar)
+    try:
+        await ws.send_json({"type": "answer", "sdp": pc.localDescription.sdp, "sessionid": sessionid})
+    except Exception:  # noqa: BLE001 - the page left before the answer: close its face now
+        _close_face(sessionid)
+        return ws
+    return await _pump(ws, avatar_session, sessionid, avatar)
 
 
 class Resampler:
@@ -501,10 +645,16 @@ async def audio(request):
 
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
+    return await _pump(ws, avatar_session, sessionid, avatar)
+
+
+async def _pump(ws, avatar_session, sessionid, avatar):
+    """The page's voice and commands for one face, until the page closes the socket."""
     chunk = avatar_session.chunk
     resample = Resampler()
     gate = MouthGate()
     speaker = 0  # who the audio belongs to, on a face with several people (_multi_speaker)
+    _opened.pop(sessionid, None)  # attached: from here the socket's own heartbeat ends a dead page
     try:
         async for msg in ws:
             if msg.type == WSMsgType.BINARY:
@@ -532,10 +682,33 @@ async def audio(request):
                 break
     finally:
         # The page closed the socket: the face goes with it.
-        _owners.pop(sessionid, None)
-        session_manager.remove_session(sessionid)
-        _touch()
+        _close_face(sessionid)
     return ws
+
+
+def _close_face(sessionid: str) -> None:
+    _owners.pop(sessionid, None)
+    _opened.pop(sessionid, None)
+    try:
+        session_manager.remove_session(sessionid)
+    except Exception:  # noqa: BLE001 - already gone
+        logger.exception("atrium could not remove session %s", sessionid)
+    _touch()
+
+
+def _close_unattached() -> None:
+    """Close faces whose page never connected its audio socket (see UNATTACHED_S)."""
+    now = time.monotonic()
+    for sessionid, opened in list(_opened.items()):
+        if now - opened >= UNATTACHED_S:
+            logger.info("atrium closing sessionid=%s: no audio socket after %.0f s", sessionid, now - opened)
+            _close_face(sessionid)
+
+
+async def _reap_unattached(_app) -> None:
+    while True:
+        await asyncio.sleep(30)
+        _close_unattached()
 
 
 def _touch() -> None:
@@ -591,6 +764,7 @@ def _preload_faces() -> None:
 async def _start_background(app) -> None:
     if PRELOAD:
         threading.Thread(target=_preload_faces, name="atrium-preload", daemon=True).start()
+    app["atrium_reaper"] = asyncio.get_running_loop().create_task(_reap_unattached(app))
     if IDLE_STOP_S > 0:
         app["atrium_idle"] = asyncio.get_running_loop().create_task(_stop_when_idle(app))
 
@@ -598,5 +772,6 @@ async def _start_background(app) -> None:
 def setup_atrium_routes(app):
     app.router.add_post("/atrium/offer", offer)
     app.router.add_get("/atrium/audio", audio)
+    app.router.add_get("/atrium/session", session)
     app.router.add_get("/atrium/health", health)
     app.on_startup.append(_start_background)

@@ -129,7 +129,6 @@ class Settings(BaseSettings):
     face_cloud_run_url: str = ""
 
     recording_retention_days: int = Field(default=365, ge=1, le=3650)
-    free_live_minutes_month: int = Field(default=120, ge=0)
     #: Live minutes a free account gets once, ever: the trial before a paid plan.
     free_trial_minutes: int = Field(default=20, ge=0)
     max_json_bytes: int = 1_048_576

@@ -21,7 +21,9 @@ def test_throwaway_email_services_are_recognised() -> None:
 
 
 def test_only_public_addresses_identify_a_network() -> None:
-    assert client_ip("8.8.4.4, 10.0.0.1", "10.0.0.2") == "8.8.4.4"  # first hop, set by Cloud Run
+    # The last hop is the one Google's front end appended; earlier ones come from the client.
+    assert client_ip("1.2.3.4, 8.8.4.4", "10.0.0.2") == "8.8.4.4"
+    assert client_ip("8.8.4.4", "10.0.0.2") == "8.8.4.4"
     assert client_ip(None, "8.8.8.8") == "8.8.8.8"
     assert client_ip(None, "127.0.0.1") is None  # local development
     assert client_ip("192.168.1.5", None) is None
@@ -56,3 +58,48 @@ async def test_a_refused_trial_only_removes_free_minutes(monkeypatch: pytest.Mon
     # And an account nobody checked keeps its 20 minutes.
     _, unchecked = await _limits(monkeypatch, {"plan": "free"})
     assert unchecked.trial_minutes_total == 20
+
+
+class _Socket:
+    def __init__(self) -> None:
+        self.headers = {"x-forwarded-for": "1.2.3.4, 8.8.4.4"}
+        self.client = None
+
+
+def _gateway() -> Any:
+    from app.platform.agents.live_gateway import LiveGateway
+
+    gateway = object.__new__(LiveGateway)
+    gateway.ws = _Socket()
+    gateway.user = USER
+    return gateway
+
+
+async def test_a_client_that_never_asked_is_decided_at_its_first_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.platform.agents import live_gateway
+
+    asked: list[tuple[str, Any, Any]] = []
+
+    async def check(uid: str, *, device_id: Any, ip: Any) -> dict[str, Any]:
+        asked.append((uid, device_id, ip))
+        return {"eligible": True}
+
+    monkeypatch.setattr(live_gateway, "check_trial", check)
+    await _gateway()._decide_trial()
+    assert asked == [("u1", None, "8.8.4.4")]  # the hop Google appended, not the client's
+
+    async def broken(uid: str, *, device_id: Any, ip: Any) -> dict[str, Any]:
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(live_gateway, "check_trial", broken)
+    await _gateway()._decide_trial()  # fail-open: never stops the session
+
+
+def test_the_walk_in_is_neither_billed_nor_taken_from_the_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.platform.agents import live_gateway
+
+    gateway = _gateway()
+    gateway.connected_at, gateway.usage_seconds_recorded, gateway.quota_remaining_ms = 100.0, 0.0, 60_000
+    monkeypatch.setattr(live_gateway.time, "monotonic", lambda: 125.0)  # sat down 25 s after connecting
+    gateway._credit_walk_in()
+    assert gateway.usage_seconds_recorded == 25 and gateway.quota_remaining_ms == 85_000

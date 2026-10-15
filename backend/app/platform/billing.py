@@ -200,8 +200,13 @@ async def redeem(
         if not snap.exists:
             raise NotFound()
         promo = snap.to_dict() or {}
-        if promo.get("usedBy") and promo.get("usedBy") != user.uid:
+        if promo.get("usedBy") == user.uid:
+            return  # entered again: the days it gave run from the first use, not from now
+        if promo.get("usedBy"):
             raise PromoCodeUsed()
+        redeem_by = promo.get("redeemBy")  # codes made before this field never lapse
+        if isinstance(redeem_by, datetime) and redeem_by < datetime.now(UTC):
+            raise NotFound()
         plan = promo.get("plan") if promo.get("plan") in {p.value for p in PAID_PLANS} else PlanId.PRO.value
         until = datetime.now(UTC) + timedelta(days=int(promo.get("days") or 14))
         transaction.update(code_ref, {"usedBy": user.uid, "usedAt": firestore.SERVER_TIMESTAMP})

@@ -91,14 +91,23 @@ from app.platform.clients import clients
 from app.platform.firestore.paths import UserPaths, is_valid_id, live_session_path
 from app.platform.jobs.processing import enqueue_session_processing
 from app.platform.media.tracks import SAMPLE_RATES, TrackWriter, pcm_duration_ms
-from app.platform.plans import live_minutes
+from app.platform.plans import PlanId, live_minutes
 from app.platform.runtime_config import ai_enabled
 from app.platform.sessions import EndReason, SessionStatus, mark_ended, mark_live
 from app.platform.storage.objects import user_content
 from app.platform.storage.paths import StoragePaths, Track
 from app.platform.transcripts.model import normalize
+from app.platform.trial import check as check_trial
+from app.platform.trial import client_ip
 from app.platform.usage import Metric, Period, UsageService
-from app.platform.users import AccountDeleting, ConsentKind, ensure_user, plan_limits, require_consents
+from app.platform.users import (
+    AccountDeleting,
+    ConsentKind,
+    effective_plan,
+    ensure_user,
+    plan_limits,
+    require_consents,
+)
 
 log = logging.getLogger(__name__)
 
@@ -633,7 +642,7 @@ class LiveGateway:
             steps[step] = int((time.monotonic() - t0) * 1000)
 
         try:
-            await ensure_user(self.user)
+            user_data = await ensure_user(self.user)
             snap = await self.db.document(UserPaths(self.uid).session(self.session_id)).get()
             if not snap.exists:
                 raise NotFound()
@@ -652,6 +661,8 @@ class LiveGateway:
         if not await ai_enabled():
             raise _Closed(CloseCode.UNAVAILABLE, "temporarily unavailable")
 
+        if effective_plan(user_data) is PlanId.FREE and not user_data.get("trial"):
+            await self._decide_trial()
         _, limits = await plan_limits(self.user)
         # The free trial's lifetime minutes, or the paid plan's month (and day, for fair use).
         self.quota_remaining_ms = int((await live_minutes(self.db, self.uid, limits))["leftSeconds"] or 0) * 1000
@@ -761,6 +772,24 @@ class LiveGateway:
             }
         )
 
+    def _credit_walk_in(self) -> None:
+        """Connected early (on the way in) and only now sitting down: that walk is not the candidate's
+        talk time. It is left out of the minutes billed (the meter skips that many seconds) and given
+        back to what they may still use; nothing was said to the model meanwhile."""
+        held_s = max(0, int(time.monotonic() - self.connected_at))
+        self.usage_seconds_recorded += held_s
+        self.quota_remaining_ms += held_s * 1000
+
+    async def _decide_trial(self) -> None:
+        """The app asks for the trial decision right after sign-in; a client that never asked (an old or
+        altered app) is decided here, before its first free minute. No device id here, so only the email
+        and network rules apply. Fail-open like the check itself: an error never costs anyone minutes."""
+        try:
+            ip = client_ip(self.ws.headers.get("x-forwarded-for"), self.ws.client.host if self.ws.client else None)
+            await check_trial(self.uid, device_id=None, ip=ip)
+        except Exception:
+            log.warning("trial check at session start failed", exc_info=True)
+
     async def _converse(self) -> None:
         tasks = {
             asyncio.create_task(self._upstream(), name="upstream"),
@@ -843,6 +872,7 @@ class LiveGateway:
                     opening, self.pending_opening = self.pending_opening, None
                     if opening is not None:
                         self.last_activity = time.monotonic()
+                        self._credit_walk_in()
                         await self.conn.send_text(opening)
                     continue
                 await self._on_control(control)

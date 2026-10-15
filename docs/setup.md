@@ -59,7 +59,7 @@ Microphone access requires a secure context: `http://localhost` works; a LAN IP 
 | `APP_CHECK_ENFORCED` | require App Check tokens (prod must be `true`) |
 | `ALLOWED_ORIGINS` | CORS and WebSocket origins |
 | `TASKS_LOCATION`, `TASKS_INVOKER_SA`, `WORKER_URL` | Cloud Tasks → worker |
-| `FREE_LIVE_MINUTES_MONTH`, `RECORDING_RETENTION_DAYS` | limits |
+| `FREE_TRIAL_MINUTES`, `RECORDING_RETENTION_DAYS` | limits |
 | `ANALYTICS_SALT` | secret salt for hashed user IDs (Secret Manager in the cloud) |
 | `FIRESTORE_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST` | emulator addresses |
 

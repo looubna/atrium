@@ -52,12 +52,20 @@ module "platform" {
     TEXT_MODEL              = "gemini-3.8-flash"
     TEXT_LOCATION           = "global"
     SPEECH_LOCATION         = "us"
-    FREE_LIVE_MINUTES_MONTH = "120"
+    FREE_TRIAL_MINUTES      = "20" # live minutes a free account gets once
     # The lip-sync face machines, started on demand: the main one first, the standby when its zone
     # has no GPU (as on atrium-coach-dev, where these were set on the service by hand).
     FACE_VMS               = "us-central1-a/atrium-face-l4,us-east4-a/atrium-face-l4-standby"
     FACE_VM_HTTPS          = "true"
     CLOUDFLARE_TURN_KEY_ID = "676a4843cce18dd7298a2dc39fcd45ee"
+    # DO NOT `terraform apply` UNTIL THESE ARE COPIED IN. Set by hand on the live atrium-api service
+    # (2026-10-02 → 10-10) and owned by Terraform, so an apply without them removes them and every
+    # face goes dark. Copy the exact values from:
+    #   gcloud run services describe atrium-api --region us-central1 --project atrium-coach-app \
+    #     --format='value(spec.template.spec.containers[0].env)'
+    # FACE_CLOUD_RUN_URL = "<us-east4 atrium-face URL>,<europe-west4 atrium-face URL>"
+    # LIVETALKING_FACES  = "<networking guests: nw_*>"
+    # The atrium-face Cloud Run services themselves (us-east4, europe-west4) are not in Terraform.
   }
 }
 

@@ -9,8 +9,8 @@ What a live minute costs (voice model, transcription and the coach, about $0.10 
 an hour) is why the paid plans are priced on typical use (about 40% of the hours) and carry a daily
 fair-use line, so one heavy user can't cost more than they pay:
 Pro $49.99 = 10 h a month (1 h a day), Pro Max $89.99 = 20 h a month (2 h a day).
-Fixed costs besides the minutes (the face server's SSD ~$17 and static IP ~$7 a month, ~$24 in all) are
-covered by the margin of two or three subscribers, so they don't change the prices.
+The lip-sync faces run on Cloud Run GPUs that scale to zero (since 2026-10-02), so they cost per minute in
+use rather than a fixed monthly amount; the stopped standby VMs keep only their disks.
 """
 
 from __future__ import annotations
