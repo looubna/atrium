@@ -5,7 +5,8 @@
     # The cloud project: the same, with GOOGLE_CLOUD_PROJECT=atrium-coach-dev and no FIRESTORE_EMULATOR_HOST.
 
 Each code is a `promoCodes/{code}` document: {plan, days, redeemBy, createdAt}; `POST /billing/redeem`
-marks it used by the first account that enters it, until `redeemBy` (--valid-days from now). The codes are printed, one per line, to paste into Devpost.
+marks it used by the first account that enters it, until `redeemBy` (--valid-days from now).
+The codes are printed, one per line, to paste into Devpost.
 """
 
 from __future__ import annotations
