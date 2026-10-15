@@ -39,7 +39,7 @@ interface Profile {
 const CONSENT_COPY: Record<ConsentKind, { title: string; body: string }> = {
   recording: {
     title: 'Record my practice sessions',
-    body: 'Your voice (and video, if you turn the camera on) is recorded so feedback can point to exact moments. You can download or delete recordings at any time.',
+    body: 'Your voice (and video, if you turn the camera on) is recorded so feedback can point to exact moments. With the camera on, your device also measures your body language as numbers (head direction, posture, hand movement); the camera picture itself is not analysed there. You can download or delete recordings at any time.',
   },
   ai_processing: {
     title: 'Process my materials with AI',
@@ -47,7 +47,7 @@ const CONSENT_COPY: Record<ConsentKind, { title: string; body: string }> = {
   },
   video_analysis: {
     title: 'Analyse my camera video with AI',
-    body: 'Optional. When your camera is on, a low-resolution copy of your video is reviewed by Google Cloud AI for facial expressions, eye contact and posture. Without this, only numbers measured on your device (like how often you look at the camera) are used.',
+    body: 'Optional. When your camera is on, your video is reviewed by Google Cloud AI: the whole session for facial expressions and eye contact, and the moments where your body language stood out in high resolution, to check them and explain how to improve. It is not used to train models. Without this, only numbers measured on your device (like how often you look at the camera) are used.',
   },
 }
 

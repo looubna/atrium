@@ -79,6 +79,7 @@ class Purpose(StrEnum):
     LANGUAGE_TIP = "language_tip"
     LANGUAGE_WRAPUP = "language_wrapup"
     BRAIN_PLAN = "brain_plan"
+    BODY_REVIEW = "body_review"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +101,12 @@ def profile_for(purpose: Purpose, settings: Settings) -> ModelProfile:
         case Purpose.EVALUATOR:
             # Runs in the background after the interview; full reasoning is worth the time.
             return ModelProfile(model, location, temperature=0.2, max_output_tokens=16_000, timeout_s=240)
+        case Purpose.BODY_REVIEW:
+            # Watches a few short high-resolution clips and checks measured findings against them:
+            # a careful look matters more than speed, and the answer is short.
+            return ModelProfile(
+                model, location, temperature=0.1, max_output_tokens=6_000, timeout_s=180, thinking_level="LOW"
+            )
         case Purpose.STRATEGIST_RESEARCH:
             return ModelProfile(
                 model, location, temperature=0.3, max_output_tokens=8_000, timeout_s=240, max_llm_calls=8,
@@ -242,10 +249,35 @@ class ModelBusy(StructuredOutputError):
 
 @dataclass(frozen=True, slots=True)
 class MediaRef:
-    """A recording the model reads directly from Cloud Storage (`gs://...`), e.g. an answer's audio."""
+    """A recording the model reads directly from Cloud Storage (`gs://...`), e.g. an answer's audio.
+
+    For a video, `start_s`/`end_s` cut a clip out of it and `fps` sets how many frames a second the
+    model sees; `high_resolution` reads that part's frames in full detail (about 4x the tokens of the
+    default low resolution, so only for short clips).
+    """
 
     uri: str
     mime_type: str
+    start_s: float | None = None
+    end_s: float | None = None
+    fps: float | None = None
+    high_resolution: bool = False
+
+
+def _media_part(item: MediaRef) -> Any:
+    from google.genai import types
+
+    clipped = item.start_s is not None or item.end_s is not None or item.fps is not None
+    return types.Part(
+        file_data=types.FileData(file_uri=item.uri, mime_type=item.mime_type),
+        video_metadata=types.VideoMetadata(
+            start_offset=f"{item.start_s:.1f}s" if item.start_s is not None else None,
+            end_offset=f"{item.end_s:.1f}s" if item.end_s is not None else None,
+            fps=item.fps,
+        ) if clipped else None,
+        media_resolution=types.PartMediaResolution(level=types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH)
+        if item.high_resolution else None,
+    )
 
 
 def static_instruction(text: str) -> Callable[[Any], str]:
@@ -395,7 +427,10 @@ class ModelGateway:
                 instruction=static_instruction(instruction),
                 output_schema=schema,
                 tools=tools or [],
-                generate_content_config=_content_config(p, low_media_resolution=bool(media)),
+                # High-resolution clips set their own resolution; everything else stays low.
+                generate_content_config=_content_config(
+                    p, low_media_resolution=bool(media) and not any(m.high_resolution for m in media)
+                ),
                 after_model_callback=record_usage,
             )
             return Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
@@ -411,7 +446,7 @@ class ModelGateway:
         timing: dict[str, int | None] = {"first_text_ms": None}
 
         parts = [
-            *(types.Part.from_uri(file_uri=item.uri, mime_type=item.mime_type) for item in media),
+            *(_media_part(item) for item in media),
             types.Part.from_text(text=content),
         ]
 

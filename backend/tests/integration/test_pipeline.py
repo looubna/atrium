@@ -200,6 +200,34 @@ async def test_body_numbers_add_findings_without_changing_the_scores(
     assert history["module"] == "interview" and history["findingCount"] == 1
 
 
+async def test_with_the_video_consent_the_ai_reviews_each_flagged_moment(
+    db: firestore.AsyncClient, queue: RecordingQueue, api_client: httpx.AsyncClient
+) -> None:
+    uid, sid = "carol", "sess00000013"
+    for kind in ("recording", "video_analysis"):
+        await api_client.put(f"/api/v1/me/consents/{kind}", headers=as_user(uid),
+                             json={"accepted": True, "version": CURRENT_CONSENT_VERSION})
+    await seed_session(db, uid, sid)
+    await db.document(f"users/{uid}/sessions/{sid}").update({"media.video": {
+        "state": "ready", "path": f"{StoragePaths(uid).session_prefix(sid)}video-1.mp4",
+        "contentType": "video/mp4", "startedAtMediaMs": 0,
+    }})
+    body = {"body": 1.0, "hands": 1.0, "full": 0.0, "clear": 1.0, "yaw": 0.0, "pitch": 0.0, "shoulderW": 0.5,
+            "faceW": 0.25, "neck": 0.8, "handPath": 0.0, "sx": [0.9] * 4, "lw": [[0.3, 1.0]] * 4,
+            "rw": [[-0.3, 1.0]] * 4}
+    timeline = [{"t": t, "present": 1.0, "eye": 0.9, "smile": 0.2, "move": 0.0, **body,
+                 "tilt": 12.0 if 40 <= t < 55 else 0.0} for t in range(60)]
+    put = await api_client.put(f"/api/v1/sessions/{sid}/media/face-metrics", headers=as_user(uid),
+                               json={"seconds": timeline, "poseHz": 4})
+    assert put.status_code == 204
+    await enqueue_session_processing(uid, sid, "interview")
+    assert await drain(queue) == ["done", "done", "done"]
+
+    report = json.loads(await user_content().read(StoragePaths(uid).body_language(sid)))
+    (tilt,) = report["findings"]
+    assert tilt["review"]["verdict"] == "confirmed" and tilt["review"]["howToFix"]
+
+
 async def test_second_attempt_records_improvement_delta(db: firestore.AsyncClient, queue: RecordingQueue) -> None:
     for sid in ("sess00000001", "sess00000002"):
         await seed_session(db, "alice", sid)

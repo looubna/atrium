@@ -32,7 +32,8 @@ CURRENT_CONSENT_VERSION = "2026-09-15"
 class ConsentKind(StrEnum):
     AI_PROCESSING = "ai_processing"
     RECORDING = "recording"
-    #: Optional: send a low-resolution copy of the camera video to AI for body-language feedback.
+    #: Optional: send the camera video to AI for body-language feedback (whole session at low resolution,
+    #: flagged moments at high resolution: `app/platform/media/body_review.py`).
     VIDEO_ANALYSIS = "video_analysis"
 
 

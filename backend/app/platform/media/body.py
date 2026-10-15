@@ -123,13 +123,21 @@ class BodyFinding:
     confidence: Confidence
     exercise_id: str
     scenario: str
+    #: The AI's look at this moment of the video (`body_review.py`): verdict, what it saw, how to fix it.
+    #: None when there was no video to review. It never changes the measurement above.
+    review: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id, "check": self.check, "kind": self.kind, "startMs": self.start_ms, "endMs": self.end_ms,
             "observation": self.observation, "measurements": self.measurements, "confidence": self.confidence,
             "exerciseId": self.exercise_id, "scenario": self.scenario,
+            **({"review": self.review} if self.review is not None else {}),
         }
+
+    def shown(self) -> bool:
+        """Whether to show it: an AI review that could not see the behaviour in the video withdraws it."""
+        return (self.review or {}).get("verdict") != "not_seen"
 
 
 @dataclass
@@ -160,7 +168,7 @@ class BodyReport:
     def summary(self) -> dict[str, Any]:
         """What the session document and the progress history keep: numbers only, no text."""
         return {"version": REPORT_VERSION, "framing": self.framing, "trackedSeconds": self.tracked_seconds,
-                "findingCount": len(self.findings), "metrics": self.metrics}
+                "findingCount": sum(1 for f in self.findings if f.shown()), "metrics": self.metrics}
 
 
 # -- parsing ----------------------------------------------------------------------

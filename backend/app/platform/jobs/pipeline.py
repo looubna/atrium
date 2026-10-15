@@ -35,6 +35,7 @@ from app.platform.firestore.paths import UserPaths, job_path
 from app.platform.jobs.queue import TaskRequest, task_name, task_queue
 from app.platform.media.assemble import Playback, assemble_candidate, assemble_interviewer, pcm_duration_ms
 from app.platform.media.body import BodyReport, analyse_body, parse_body_seconds
+from app.platform.media.body_review import review_findings
 from app.platform.media.ffmpeg import mix_to_m4a, pcm_to_flac_chunks
 from app.platform.media.prosody import VoiceMetrics, measure_voice
 from app.platform.media.tracks import SAMPLE_RATES
@@ -292,6 +293,15 @@ def _body_report(face_data: Any, transcript: Transcript, setting: Setting, modul
         return None
 
 
+async def _reviewed(uid: str, body: BodyReport, video: MediaRef, offset_ms: int) -> BodyReport:
+    """Findings checked against the video by the AI; as measured when that fails (it is extra)."""
+    try:
+        return await review_findings(uid, body, video, offset_ms)
+    except Exception:
+        log.warning("body-language review failed", exc_info=True)
+        return body
+
+
 async def step_evaluate(job: dict[str, Any]) -> None:
     session = await load_session(job)
     uid, sid, run_id = job["uid"], job["sessionId"], job["runId"]
@@ -344,16 +354,18 @@ async def step_evaluate(job: dict[str, Any]) -> None:
 
     video: tuple[MediaRef, int] | None = None
     video_path = str(video_info.get("path") or "")
-    if (
-        audio
-        and video_info.get("state") == "ready"
-        and video_path.startswith(StoragePaths(uid).session_prefix(sid))
-        and any(c.kind is ConsentKind.VIDEO_ANALYSIS and c.current for c in await load_consents(uid))
-    ):
-        video = (
+    camera_video = (
+        (
             MediaRef(f"gs://{settings.user_content_bucket}/{video_path}", str(video_info.get("contentType"))),
             int(video_info.get("startedAtMediaMs", 0)),
         )
+        if video_info.get("state") == "ready"
+        and video_path.startswith(StoragePaths(uid).session_prefix(sid))
+        and any(c.kind is ConsentKind.VIDEO_ANALYSIS and c.current for c in await load_consents(uid))
+        else None
+    )
+    if audio and camera_video:
+        video = camera_video
 
     evaluator = registry.service(module, "evaluator")
     evaluation, meta = await evaluator.evaluate(
@@ -365,6 +377,10 @@ async def step_evaluate(job: dict[str, Any]) -> None:
     await store.write(
         StoragePaths(uid).evaluation(sid, run_id), evaluation.model_dump_json().encode(), "application/json"
     )
+    if body is not None and body.findings and camera_video and (
+        settings.ai_provider is AiProvider.FAKE or settings.app_env not in (Env.LOCAL, Env.TEST)
+    ):
+        body = await _reviewed(uid, body, *camera_video)
     if body is not None:
         await store.write(
             StoragePaths(uid).body_language(sid), json.dumps(body.to_dict()).encode(), "application/json"

@@ -11,7 +11,11 @@ const TYPES = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'v
 
 /** Mirrors the API's `max_video_bytes`. */
 export const MAX_VIDEO_BYTES = 1024 ** 3
-const VIDEO_BITS_PER_SECOND = 600_000
+/**
+ * Enough for AI to read posture, hands and gaze at 720p (`body_review.py` watches flagged moments at
+ * high resolution), and still under `MAX_VIDEO_BYTES` for the longest round (65 min ≈ 730 MB).
+ */
+const VIDEO_BITS_PER_SECOND = 1_500_000
 const TIMESLICE_MS = 5_000
 
 export type VideoContentType = 'video/mp4' | 'video/webm'
