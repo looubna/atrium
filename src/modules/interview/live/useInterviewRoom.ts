@@ -268,7 +268,7 @@ export function useInterviewRoom({
       window.clearInterval(check)
       setFraming(null)
       const seconds = faces.stop()
-      if (seconds.length >= 20) void saveFaceMetrics(id, seconds).catch(() => {})
+      if (seconds.length >= 20) void saveFaceMetrics(id, seconds, faces.poseHz).catch(() => {})
     }
   }, [camera, joined, sessionId, liveMediaMs])
 

@@ -140,8 +140,9 @@ export const getExampleAudio = (sessionId: string, eventId: string, voice: Examp
   })
 
 /** Per-second face measurements from the device (numbers only, no images). */
-export const saveFaceMetrics = (sessionId: string, seconds: FaceSecond[]) =>
-  api<void>(`/sessions/${sessionId}/media/face-metrics`, { method: 'PUT', body: { seconds } })
+/** `poseHz`: body-tracking samples a second, the length of each second's per-sample lists. */
+export const saveFaceMetrics = (sessionId: string, seconds: FaceSecond[], poseHz?: number) =>
+  api<void>(`/sessions/${sessionId}/media/face-metrics`, { method: 'PUT', body: { seconds, ...(poseHz ? { poseHz } : {}) } })
 
 export const completeVideoUpload = (sessionId: string, uploadId: string) =>
   api<{ state: VideoState }>(`/sessions/${sessionId}/media/video-complete`, { method: 'POST', body: { uploadId } })

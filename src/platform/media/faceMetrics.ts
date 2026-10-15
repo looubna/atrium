@@ -1,4 +1,14 @@
 import type { FaceLandmarker, NormalizedLandmark, PoseLandmarker } from '@mediapipe/tasks-vision'
+import {
+  MAX_HAND_PATH,
+  faceWidth,
+  p95,
+  poseFeatures,
+  poseSlot,
+  wristTravel,
+  type Point,
+  type PoseFeatures,
+} from './bodyFeatures'
 
 /**
  * On-device face and body measurements during an interview: whether the candidate looks
@@ -15,8 +25,15 @@ import type { FaceLandmarker, NormalizedLandmark, PoseLandmarker } from '@mediap
 const WASM_BASE = '/models/mediapipe/wasm'
 const MODEL_PATH = '/models/mediapipe/face_landmarker.task'
 const POSE_MODEL_PATH = '/models/mediapipe/pose_landmarker_lite.task'
-/** Body tracking runs on every other face sample: posture changes slowly, and it costs more. */
-const POSE_EVERY = 2
+/**
+ * Body tracking runs with every face sample, so sway and repeated gestures can be seen; on a device
+ * where it is slow it drops to every other sample, which still serves posture and framing.
+ */
+const POSE_EVERY_SLOW = 2
+/** Pose detection slower than this (95th percentile, ms) halves the body-tracking rate. */
+const SLOW_POSE_MS = 40
+/** Timings kept to judge that. */
+const POSE_TIMINGS = 20
 /** A landmark counts as in frame above this visibility, and inside the image. */
 const VISIBLE = 0.5
 /** A wrist closer to the nose than this many shoulder-widths is up at the head or face. */
@@ -68,6 +85,23 @@ export interface FaceSecond {
   handsFace?: number
   /** Body tracking: hips and feet in frame too. */
   full?: number
+  /** Head turn and nod (degrees, mean of the second), while present. */
+  yaw?: number
+  pitch?: number
+  /** Face width, cheek to cheek (image heights), while present. */
+  faceW?: number
+  /** Shoulder line tilt (degrees; positive: the person's left shoulder lower), while the shoulders were seen. */
+  tilt?: number
+  /** Shoulder width (image heights). */
+  shoulderW?: number
+  /** The nose's height above the shoulder line, in shoulder widths. */
+  neck?: number
+  /** How far the wrists travelled this second, in shoulder widths. */
+  handPath?: number
+  /** One slot per body sample (`poseHz` a second): the shoulder midpoint's x, and the wrists relative to it. */
+  sx?: (number | null)[]
+  lw?: (Point | null)[]
+  rw?: (Point | null)[]
 }
 
 /**
@@ -244,9 +278,46 @@ interface Bucket {
   hands: number
   handsFace: number
   full: number
+  /** Sums for the second's means, and how many samples each one has. */
+  angles: number
+  yaw: number
+  pitch: number
+  faces: number
+  faceW: number
+  shoulders: number
+  tilt: number
+  shoulderW: number
+  necks: number
+  neck: number
+  handPath: number
+  sx: (number | null)[] | null
+  lw: (Point | null)[] | null
+  rw: (Point | null)[] | null
 }
 
 const round2 = (value: number) => Math.round(value * 100) / 100
+const round1 = (value: number) => Math.round(value * 10) / 10
+const round3 = (value: number) => Math.round(value * 1000) / 1000
+const roundPoint = (p: Point | null): Point | null => (p ? [round2(p[0]), round2(p[1])] : null)
+
+/** A second's body-language numbers (face metrics version 3); only those that were measured. */
+function bodyNumbers(b: Bucket): Partial<FaceSecond> {
+  return {
+    ...(b.angles ? { yaw: round1(b.yaw / b.angles), pitch: round1(b.pitch / b.angles) } : {}),
+    ...(b.faces ? { faceW: round3(b.faceW / b.faces) } : {}),
+    ...(b.shoulders
+      ? {
+          tilt: round1(b.tilt / b.shoulders),
+          shoulderW: round3(b.shoulderW / b.shoulders),
+          handPath: round2(Math.min(MAX_HAND_PATH, b.handPath)),
+          ...(b.necks ? { neck: round2(b.neck / b.necks) } : {}),
+          sx: (b.sx ?? []).map((x) => (x === null ? null : round3(x))),
+          lw: (b.lw ?? []).map(roundPoint),
+          rw: (b.rw ?? []).map(roundPoint),
+        }
+      : {}),
+  }
+}
 
 export class FaceTracker {
   private readonly buckets = new Map<number, Bucket>()
@@ -260,6 +331,14 @@ export class FaceTracker {
   private readonly recentBodies: BodySample[] = []
   private pose: PoseLandmarker | null = null
   private samples = 0
+  private poseEvery = 1
+  private readonly poseTimings: number[] = []
+  private lastPose: PoseFeatures | null = null
+
+  /** Body-tracking samples a second, as recorded (lower on a slow device). */
+  get poseHz(): number {
+    return SAMPLES_PER_SECOND / this.poseEvery
+  }
 
   /** What is wrong with the framing right now, if anything; null when it is fine or unknown. */
   framing(): Framing | null {
@@ -339,10 +418,12 @@ export class FaceTracker {
     const bucket = this.buckets.get(second) ?? {
       samples: 0, present: 0, clear: 0, judged: 0, eye: 0, smile: 0, move: 0, spoken: 0, toSpeaker: 0,
       poses: 0, body: 0, hands: 0, handsFace: 0, full: 0,
+      angles: 0, yaw: 0, pitch: 0, faces: 0, faceW: 0, shoulders: 0, tilt: 0, shoulderW: 0, necks: 0, neck: 0,
+      handPath: 0, sx: null, lw: null, rw: null,
     }
     bucket.samples += 1
     this.samples += 1
-    if (this.pose && this.samples % POSE_EVERY === 0) this.samplePose(this.pose, video, now, bucket)
+    if (this.pose && this.samples % this.poseEvery === 0) this.samplePose(this.pose, video, now, bucket)
 
     const matrix = result.facialTransformationMatrixes?.[0]?.data
     const shapes = result.faceBlendshapes?.[0]?.categories
@@ -350,6 +431,14 @@ export class FaceTracker {
       const blend: Record<string, number> = {}
       for (const shape of shapes) blend[shape.categoryName] = shape.score
       const angles = headAngles(matrix)
+      bucket.angles += 1
+      bucket.yaw += angles.yaw
+      bucket.pitch += angles.pitch
+      const width = faceWidth(result.faceLandmarks?.[0], video.videoWidth / Math.max(1, video.videoHeight))
+      if (width !== null) {
+        bucket.faces += 1
+        bucket.faceW += width
+      }
       const looking = this.options.setting === 'screen' ? lookingAtScreen(angles, blend) : lookingAtCamera(angles, blend)
       const seat = this.options.speakerSeat?.() ?? null
       if (seat !== null) {
@@ -384,14 +473,18 @@ export class FaceTracker {
 
   private samplePose(pose: PoseLandmarker, video: HTMLVideoElement, now: number, bucket: Bucket): void {
     let landmarks: NormalizedLandmark[] | undefined
+    const started = performance.now()
     try {
       landmarks = pose.detectForVideo(video, now).landmarks?.[0]
     } catch {
       return
     }
+    this.timePose(performance.now() - started)
+    const aspect = video.videoWidth / Math.max(1, video.videoHeight)
     const seen = landmarks
-      ? readPose(landmarks, video.videoWidth / Math.max(1, video.videoHeight))
+      ? readPose(landmarks, aspect)
       : { body: false, hands: false, handsFace: false, full: false }
+    this.addBody(bucket, landmarks ? poseFeatures(landmarks, aspect) : null)
     bucket.poses += 1
     if (seen.body) bucket.body += 1
     if (seen.hands) bucket.hands += 1
@@ -399,7 +492,41 @@ export class FaceTracker {
     if (seen.full) bucket.full += 1
     this.recentBodies.push(seen)
     // About three seconds: long enough that a passing gesture does not raise a warning.
-    if (this.recentBodies.length > Math.ceil((3 * SAMPLES_PER_SECOND) / POSE_EVERY)) this.recentBodies.shift()
+    if (this.recentBodies.length > Math.ceil(3 * this.poseHz)) this.recentBodies.shift()
+  }
+
+  /** A device too slow for body tracking on every sample drops to every other one, for the rest of the session. */
+  private timePose(ms: number): void {
+    this.poseTimings.push(ms)
+    if (this.poseTimings.length > POSE_TIMINGS) this.poseTimings.shift()
+    if (this.poseEvery === 1 && this.poseTimings.length >= POSE_TIMINGS && p95(this.poseTimings) > SLOW_POSE_MS) {
+      this.poseEvery = POSE_EVERY_SLOW
+    }
+  }
+
+  /** Adds one body sample's numbers to its second: sums for the means, and its slot in the per-sample lists. */
+  private addBody(bucket: Bucket, features: PoseFeatures | null): void {
+    const hz = this.poseHz
+    bucket.sx ??= Array<number | null>(hz).fill(null)
+    bucket.lw ??= Array<Point | null>(hz).fill(null)
+    bucket.rw ??= Array<Point | null>(hz).fill(null)
+    if (!features) {
+      this.lastPose = null
+      return
+    }
+    const slot = Math.min(bucket.sx.length - 1, poseSlot(this.mediaMs(), hz))
+    bucket.sx[slot] = features.sx
+    bucket.lw[slot] = features.lw
+    bucket.rw[slot] = features.rw
+    bucket.shoulders += 1
+    bucket.tilt += features.tilt
+    bucket.shoulderW += features.shoulderW
+    if (features.neck !== null) {
+      bucket.necks += 1
+      bucket.neck += features.neck
+    }
+    bucket.handPath += wristTravel(this.lastPose, features)
+    this.lastPose = features
   }
 
   private lumaCanvas: HTMLCanvasElement | null = null
@@ -472,6 +599,7 @@ export class FaceTracker {
               full: round2(b.full / b.poses),
             }
           : {}),
+        ...bodyNumbers(b),
       }))
   }
 }
