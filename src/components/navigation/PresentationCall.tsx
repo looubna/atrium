@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ACADEMIC_MEDIA_BASE, PRESENTER_SCREENS, THEATER_MEDIA_BASE } from '@/data/meeting'
+import { ACADEMIC_MEDIA_BASE, DEFENSE_MEDIA_BASE, PRESENTER_SCREENS, THEATER_MEDIA_BASE } from '@/data/meeting'
 import { presentsStanding, type PresentationBriefing, type PresentationSetup } from '@/data/practice'
 import { useCamera } from '@/lib/useCamera'
 import { quadTransform } from '@/lib/perspective'
@@ -10,7 +10,10 @@ import { Button } from '../ui/Button'
 import { IconMic, IconMicOff, IconPhoneOff } from '../ui/Icon'
 import { AvatarTile } from './AvatarTile'
 import { FramingHint } from './FramingHint'
+import { RotateHint } from './RotateHint'
 import { SlideControls, SlideReader } from './SlideControls'
+import { CameraCheck } from './CameraCheck'
+import { VIDEO_BASE } from '@/platform/media/videoBase'
 
 /**
  * Presentation practice: the user's slides, large, and the audience beside them — Robert, Priya and
@@ -24,11 +27,13 @@ import { SlideControls, SlideReader } from './SlideControls'
 
 const shot = (base: string) => ({ loop: `${base}.mp4`, still: `${base}.jpg` })
 const ROOMS = {
-  'small-room': shot('/video/sales/room_investors'),
-  virtual: shot('/video/sales/call_investors'),
-  'large-audience': { loop: '/video/theater/landscape/idle.mp4', still: '/video/theater/landscape/poster.jpg' },
+  'small-room': shot(`${VIDEO_BASE}/sales/room_investors`),
+  virtual: shot(`${VIDEO_BASE}/sales/call_investors`),
+  'large-audience': { loop: `${VIDEO_BASE}/theater/landscape/idle.mp4`, still: `${VIDEO_BASE}/theater/landscape/poster.jpg` },
   // The university classroom, from the lectern: the academic presentation's own footage.
   academic: { loop: `${ACADEMIC_MEDIA_BASE}/landscape/idle.mp4`, still: `${ACADEMIC_MEDIA_BASE}/landscape/poster.jpg` },
+  // The university lecture hall from the lectern: the thesis committee at the front table.
+  defence: { loop: `${DEFENSE_MEDIA_BASE}/landscape/idle.mp4`, still: `${DEFENSE_MEDIA_BASE}/landscape/poster.jpg` },
 } as const
 
 /** The presentation on screen now, if any. */
@@ -107,6 +112,8 @@ function Loop({ loop, still }: { loop: string; still: string }) {
 const LECTERN = PRESENTER_SCREENS[`${THEATER_MEDIA_BASE}/landscape`]
 /** The classroom footage's lectern laptop, for the academic presentation. */
 const ACADEMIC_LECTERN = PRESENTER_SCREENS[`${ACADEMIC_MEDIA_BASE}/landscape`]
+/** The lecture hall's lectern laptop (the projector behind the committee stays blank). */
+const DEFENCE_LECTERN = PRESENTER_SCREENS[`${DEFENSE_MEDIA_BASE}/landscape`]
 
 type Strip = { x: number; y: number; w: number; h: number; frame: readonly [number, number] }
 
@@ -119,6 +126,8 @@ type Strip = { x: number; y: number; w: number; h: number; frame: readonly [numb
  */
 const STRIPS: Partial<Record<PresentationSetup['format'], Strip>> = {
   academic: { x: 416, y: 288, w: 1040, h: 240, frame: [1920, 1080] },
+  // The committee table: `infra/livetalking/recordings/defense/make_strip.sh` (face `defense_strip`).
+  defence: { x: 192, y: 352, w: 832, h: 272, frame: [1920, 1080] },
   'large-audience': { x: 608, y: 384, w: 1152, h: 176, frame: [1920, 1080] },
 }
 
@@ -223,7 +232,7 @@ function LecternLaptop({
  * The laptop the speaker presents from, cut out of the auditorium photograph (`public/video/presentation/
  * laptop.png`): where it sits in that 1920x1080 frame, so it lands in the small room exactly as in the hall.
  */
-const LAPTOP = { src: '/video/presentation/laptop.png', x: 30, y: 590, w: 660, h: 490 }
+const LAPTOP = { src: `${VIDEO_BASE}/presentation/laptop.png`, x: 30, y: 590, w: 660, h: 490 }
 
 /**
  * In the small room the footage has no laptop, so the speaker's own — the real one from the
@@ -365,7 +374,7 @@ function Stage({ sessionId, setup }: { sessionId: string; setup: PresentationSet
   // In the room or the auditorium the speaker stands in front of people; only `virtual` is a call.
   const inPerson = setup.format !== 'virtual'
   // In the auditorium the slides are on the lectern laptop in the footage rather than a corner screen.
-  const auditorium = setup.format === 'large-audience' || setup.format === 'academic'
+  const auditorium = setup.format === 'large-audience' || setup.format === 'academic' || setup.format === 'defence'
   const roomBox = useRef<HTMLDivElement>(null)
   const box = useBox(roomBox)
 
@@ -415,11 +424,7 @@ function Stage({ sessionId, setup }: { sessionId: string; setup: PresentationSet
           <img src={media.still} alt="" className="absolute inset-0 size-full scale-110 object-cover blur-xl" />
           <div
             ref={roomBox}
-            className={cn(
-              'absolute inset-0',
-              // Three people at a table do not fit an upright phone cropped to fill it: shown whole there.
-              '[@media(orientation:portrait)]:inset-auto [@media(orientation:portrait)]:inset-x-0 [@media(orientation:portrait)]:top-1/2 [@media(orientation:portrait)]:aspect-video [@media(orientation:portrait)]:-translate-y-1/2',
-            )}
+            className="absolute inset-0"
           >
             {audienceView}
             {auditorium ? (
@@ -427,12 +432,14 @@ function Stage({ sessionId, setup }: { sessionId: string; setup: PresentationSet
                 box={box}
                 poster={media.still}
                 slide={deck ? deck.slides[slideIndex] : null}
-                lectern={setup.format === 'academic' ? ACADEMIC_LECTERN : LECTERN}
+                lectern={setup.format === 'academic' ? ACADEMIC_LECTERN : setup.format === 'defence' ? DEFENCE_LECTERN : LECTERN}
               />
             ) : (
               <TableLaptop box={box} slide={deck ? deck.slides[slideIndex] : null} />
             )}
           </div>
+          {/* The room fills the screen; upright, its sides are cut off. */}
+          <RotateHint who="the whole room" />
           <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/55 to-transparent px-4 pb-8 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] text-[12.5px] text-white/85">
             <span className="min-w-0 truncate font-medium">
               {briefing?.title ?? 'Presentation'}
@@ -502,11 +509,16 @@ function Stage({ sessionId, setup }: { sessionId: string; setup: PresentationSet
       <SlideReader />
 
       {/* How the speaker sits in the camera's frame, while it can still be fixed. */}
-      <FramingHint framing={room.framing} />
+      {inPerson ? (
+        // In person: your own camera only until you are in frame and talking.
+        started && <CameraCheck stream={camera.stream} framing={room.framingStatus} standing={standing} micLevel={live.state.micLevel} />
+      ) : (
+        <FramingHint framing={room.framing} />
+      )}
 
       {/* Before starting: the briefing. */}
       {!started && (
-        <div className="absolute inset-0 z-10 grid place-items-center bg-black/55 p-4 backdrop-blur-[2px]">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]">
           <div className="glass flex max-h-[88%] w-full max-w-lg flex-col rounded-2xl p-5">
             <div className="min-h-0 overflow-y-auto pr-1">
               {briefing ? <Briefing briefing={briefing} standing={standing} /> : <div className="eyebrow">Presentation</div>}

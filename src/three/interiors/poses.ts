@@ -92,7 +92,7 @@ export const INTERIOR_SPECS: Record<string, InteriorSpec> = {
     fov: { theater: 50 },
     fovNarrow: { theater: 64 },
     sessionPoses: {
-      // Small-room presentation (see MeetingRoom.tsx). The table runs along x
+      // Small-room presentation. The table runs along x
       // with its head at x = -8.5; the oak wall and screen are on the
       // presenter's left, glass ahead and to the right. Standing, the presenter
       // is just behind the head of the table; sitting, they are at it, level

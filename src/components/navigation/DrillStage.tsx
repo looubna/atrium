@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { DRILLS, isDrillId, makePrompt, paceWindow, type Drill, type DrillId, type DrillPrompt } from '@/data/drills'
+import {
+  DRILLS,
+  STORY_COURSE,
+  isDrillId,
+  isStoryDrill,
+  makePrompt,
+  paceWindow,
+  type Drill,
+  type DrillId,
+  type DrillPrompt,
+} from '@/data/drills'
+import { PRACTICE_FORMATS } from '@/data/practice'
 import { useCamera } from '@/lib/useCamera'
 import { clock, useCountdown } from '@/lib/useCountdown'
 import { FaceTracker } from '@/platform/media/faceMetrics'
@@ -39,26 +50,38 @@ export function DrillStage() {
   const session = useAppStore((s) => s.session)
   const selectedId = useAppStore((s) => s.selectedId)
   const leave = useAppStore((s) => s.leaveDrill)
+  const setSession = useAppStore((s) => s.setSession)
   const mine = session && session.locationId === selectedId && session.format.destination === 'drill' ? session : null
 
   if (view !== 'drill' || !mine || !isDrillId(mine.format.id)) return null
   const framework = mine.drill?.framework
+  // The Story Course goes on to its next step in the same session, from the Park.
+  const nextStep = STORY_COURSE[STORY_COURSE.indexOf(mine.format.id) + 1]
+  const nextFormat = STORY_COURSE.includes(mine.format.id)
+    ? PRACTICE_FORMATS.Storytelling?.find((f) => f.id === nextStep)
+    : undefined
   return (
     <DrillRunner
       key={`${mine.format.id}-${framework ?? ''}`}
       id={mine.format.id}
       minutes={mine.minutes}
       framework={framework}
+      place={mine.locationId === 'park' ? 'PARK · STORY COURSE' : 'PRACTICE CENTER'}
+      onNextStep={nextFormat ? () => setSession({ ...mine, format: nextFormat }) : undefined}
       onLeave={leave}
     />
   )
 }
 
-function DrillRunner({ id, minutes, framework, onLeave }: {
+function DrillRunner({ id, minutes, framework, place, onNextStep, onLeave }: {
   id: DrillId
   minutes: number
   /** Keep Framework Challenge on this framework. */
   framework?: string
+  /** Where the drill is taken, for the header. */
+  place: string
+  /** The Story Course: go on to the next step. */
+  onNextStep?: () => void
   onLeave: () => void
 }) {
   const drill = DRILLS[id]
@@ -75,6 +98,14 @@ function DrillRunner({ id, minutes, framework, onLeave }: {
   useEffect(() => {
     void refreshProgress()
   }, [refreshProgress])
+  // Tell It Again retells the user's last story, once progress says which one it was.
+  const lastStory = usePracticeProgress((s) => s.progress?.story?.lastSeed)
+  useEffect(() => {
+    if (id === 'story-retell' && lastStory && phase === 'intro') setPrompt({ kind: 'story', seed: lastStory, retell: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, lastStory])
+  // The same story again next round, for a retelling; a fresh prompt otherwise.
+  const nextPrompt = () => (id === 'story-retell' ? prompt : makePrompt(id, prompt, framework))
   // Recording hand-off: only a round that ended by finishing (or the timer) is analysed.
   const submitNext = useRef(false)
   const prepStarted = useRef(0)
@@ -219,7 +250,7 @@ function DrillRunner({ id, minutes, framework, onLeave }: {
       {/* Header */}
       <div className="relative flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[10.5px] font-semibold tracking-[0.14em] text-[#5fd6de]">PRACTICE CENTER · ROUND {rounds + (phase === 'intro' ? 0 : 1) || 1}</div>
+          <div className="text-[10.5px] font-semibold tracking-[0.14em] text-[#5fd6de]">{place} · ROUND {rounds + (phase === 'intro' ? 0 : 1) || 1}</div>
           <div className="truncate text-[15px] font-semibold text-chalk">{drill.title}</div>
         </div>
         <div
@@ -302,11 +333,14 @@ function DrillRunner({ id, minutes, framework, onLeave }: {
             )}
             {phase === 'review' && (
               <>
-                <Primary onClick={() => startRound(makePrompt(id, prompt, framework))}>Next round</Primary>
+                {onNextStep && (progress?.challenges[0]?.done || (analysis.state === 'done' && analysis.result.awards.challenge?.completed)) && (
+                  <Primary onClick={onNextStep}>Next step</Primary>
+                )}
+                <Primary onClick={() => startRound(nextPrompt())}>{isStoryDrill(id) ? 'Another round' : 'Next round'}</Primary>
                 <Secondary onClick={() => startRound()}>Same prompt again</Secondary>
               </>
             )}
-            {phase !== 'intro' && phase !== 'review' && (
+            {phase !== 'intro' && phase !== 'review' && id !== 'story-retell' && (
               <button type="button" onClick={() => startRound(makePrompt(id, prompt, framework))} className="text-[11.5px] font-medium text-faint transition-colors hover:text-chalk">
                 New prompt
               </button>
@@ -397,6 +431,18 @@ function Intro({ drill, progress, prepSeconds }: { drill: Drill; progress?: Dril
           </li>
         ))}
       </ul>
+      {drill.example && (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-xl border border-white/8 bg-white/4 px-3 py-2.5">
+            <div className="eyebrow">Weak</div>
+            <p className="mt-1 text-[12.5px] italic leading-snug text-mist">{drill.example.weak}</p>
+          </div>
+          <div className="rounded-xl border border-jade-400/30 bg-jade-500/[0.07] px-3 py-2.5">
+            <div className="eyebrow text-jade-300">Strong</div>
+            <p className="mt-1 text-[12.5px] italic leading-snug text-chalk">{drill.example.strong}</p>
+          </div>
+        </div>
+      )}
       {drill.why && (
         <>
           <div className="eyebrow mt-4">Why it works</div>
@@ -599,6 +645,22 @@ function PromptView({
             ))}
           </div>
           <p className="mt-2 text-[11.5px] text-faint">Tap a word once you’ve used it.</p>
+        </>
+      )}
+
+      {prompt.kind === 'story' && (
+        <>
+          <Eyebrow>{prompt.retell ? 'Tell it again — your last story' : 'Tell a story about'}</Eyebrow>
+          <p className="mt-2 text-[20px] font-semibold leading-snug text-chalk">{prompt.seed}</p>
+          <p className="mt-3 text-[12.5px] leading-snug text-mist">{drill.goal}</p>
+          <ul className="mt-2 flex flex-col gap-1">
+            {drill.tips.map((t) => (
+              <li key={t} className="flex gap-2 text-[12px] leading-snug text-faint">
+                <IconCheck width={13} height={13} className="mt-0.5 shrink-0 text-jade-400" />
+                {t}
+              </li>
+            ))}
+          </ul>
         </>
       )}
 

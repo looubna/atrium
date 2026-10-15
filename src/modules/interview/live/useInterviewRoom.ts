@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { PANEL, PANEL_IN_PERSON } from '@/data/interviewers'
 import { saveFaceMetrics, type FaceModule } from '@/modules/interview/api'
 import type { AvatarRenderer } from '@/platform/avatar/types'
+import { useFaceWarmup } from '@/platform/avatar/faceWarmup'
 import { useAvatar, type FilmedFace } from '@/platform/avatar/useAvatar'
 import { CameraRecorder, cameraRecordingSupported } from '@/platform/media/cameraRecorder'
 import { FaceTracker, type FaceTrackerOptions, type Framing } from '@/platform/media/faceMetrics'
@@ -21,7 +22,19 @@ const MAX_FACE_RECONNECTS = 20
  * same path a mid-interview reconnect takes). Waiting longer would only trade a face that
  * arrives a few seconds late for a candidate staring at a frozen screen.
  */
-const FACE_JOIN_TIMEOUT_MS = 8_000
+// 40 s, not 8: on Cloud Run a face is loaded from storage after the server is up (~15-30 s), and the
+// conversation loader covers the wait, so starting on voice alone only lost the face's first minutes.
+const FACE_JOIN_TIMEOUT_MS = 40_000
+/**
+ * While the face server is still waking up (a cold start takes about 70 s), the deadline above does not run:
+ * the person waits with the "getting ready" status rather than starting on voice alone. Only if the
+ * server says it is unavailable, or after this cap, does the conversation go ahead without the face.
+ */
+const FACE_WAKE_CAP_MS = 180_000
+const faceServerWaking = () => {
+  const state = useFaceWarmup.getState().state
+  return state === 'starting' || state === 'loading'
+}
 
 /**
  * Everything a live interview needs, wherever it happens (a video call or the meeting room):
@@ -37,6 +50,7 @@ export function useInterviewRoom({
   module = 'interview',
   faces = true,
   filmed = null,
+  loaderAfterOpen = false,
 }: {
   /** The live session, or null when no interview runs here. */
   sessionId: string | null
@@ -49,6 +63,11 @@ export function useInterviewRoom({
    * opens once this is true (the candidate has sat down): the connection is made on the way in.
    */
   openWhen?: boolean
+  /**
+   * The loading screen only once `openWhen` comes true, not from the start: where the user walks
+   * in while the call connects (the in-person interview), the walk is not hidden behind it.
+   */
+  loaderAfterOpen?: boolean
   tracker?: FaceTrackerOptions
   /** Which module's session this is: it decides whose face joins. */
   module?: FaceModule
@@ -87,9 +106,18 @@ export function useInterviewRoom({
     await beforeConnectRef.current?.()
     if (faceSettledRef.current) return
     await new Promise<void>((resolve) => {
-      const timer = window.setTimeout(resolve, FACE_JOIN_TIMEOUT_MS)
+      // The join deadline only counts while the face server is up; a cold start is waited out (capped).
+      const started = Date.now()
+      let waited = 0
+      const timer = window.setInterval(() => {
+        if (!faceServerWaking()) waited += 500
+        if (waited >= FACE_JOIN_TIMEOUT_MS || Date.now() - started >= FACE_WAKE_CAP_MS) {
+          window.clearInterval(timer)
+          resolve()
+        }
+      }, 500)
       faceWaiters.current.push(() => {
-        window.clearTimeout(timer)
+        window.clearInterval(timer)
         resolve()
       })
     })
@@ -100,6 +128,8 @@ export function useInterviewRoom({
     panelFaces,
     waitForFace,
     openWhen !== undefined,
+    undefined,
+    loaderAfterOpen,
   )
   const { begin } = live
   const callUp = ['connecting', 'live', 'reconnecting'].includes(live.state.phase)
@@ -142,8 +172,17 @@ export function useInterviewRoom({
   useEffect(() => {
     setFaceOverdue(false)
     if (!sessionId || !liveActive) return
-    const timer = window.setTimeout(() => setFaceOverdue(true), FACE_JOIN_TIMEOUT_MS)
-    return () => window.clearTimeout(timer)
+    // As in waitForFace: the deadline runs only while the face server is up, a cold start is waited out.
+    const started = Date.now()
+    let waited = 0
+    const timer = window.setInterval(() => {
+      if (!faceServerWaking()) waited += 500
+      if (waited >= FACE_JOIN_TIMEOUT_MS || Date.now() - started >= FACE_WAKE_CAP_MS) {
+        window.clearInterval(timer)
+        setFaceOverdue(true)
+      }
+    }, 500)
+    return () => window.clearInterval(timer)
   }, [sessionId, liveActive, faceGeneration])
   // Nothing is waiting on a face that was never asked for.
   const faceSettled = !faces || Boolean(faceOnScreen) || avatarFailed || avatarUnavailable || faceOverdue
@@ -211,7 +250,7 @@ export function useInterviewRoom({
   const trackerRef = useRef(tracker)
   trackerRef.current = tracker
   // How the candidate sits in the frame, checked live so they can fix it while it still counts.
-  const [framing, setFraming] = useState<Framing | null>(null)
+  const [framing, setFraming] = useState<Framing | 'ok' | null>(null)
   useEffect(() => {
     if (!sessionId || !joined || !camera || trackedSessionRef.current === sessionId) return
     trackedSessionRef.current = sessionId
@@ -224,7 +263,7 @@ export function useInterviewRoom({
       speakerSeat: options?.speakerSeat && (() => trackerRef.current?.speakerSeat?.() ?? null),
     })
     void faces.start()
-    const check = window.setInterval(() => setFraming(faces.framing()), 1000)
+    const check = window.setInterval(() => setFraming(faces.framingStatus()), 1000)
     return () => {
       window.clearInterval(check)
       setFraming(null)
@@ -237,7 +276,9 @@ export function useInterviewRoom({
     live,
     liveActive,
     /** A framing problem to tell the candidate about while the camera is on, or null. */
-    framing: camera ? framing : null,
+    framing: camera && framing !== 'ok' ? framing : null,
+    /** The framing as known: a problem, 'ok' once actually seen in frame, or null while unknown. */
+    framingStatus: camera ? framing : null,
     avatar,
     avatarFailed,
     avatarUnavailable,

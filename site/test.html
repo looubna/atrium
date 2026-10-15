@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test Atrium</title>
+<meta name="description" content="Help launch Atrium Coach on Google Play: join the test in two taps.">
+<meta property="og:title" content="Help launch Atrium Coach on Google Play">
+<meta property="og:description" content="Join the test in two taps and practise real conversations out loud with live AI people.">
+<meta property="og:image" content="https://atriumcoach.com/img/03_panel_interview.jpg">
+<meta name="theme-color" content="#07090c">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .langs { display: flex; justify-content: center; gap: 8px; margin: 0 auto 22px; }
+  .langs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  .langs button[aria-pressed="true"] { color: var(--text); border-color: var(--text); }
+  .steps { width: 100%; max-width: 520px; margin: 28px auto 0; display: grid; grid-template-columns: 1fr; gap: 16px; text-align: start; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+  .step h2 { font-size: 19px; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+  .step .n { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--text); color: #07090c; font-size: 15px; font-weight: 700; flex: none; }
+  .step p { margin: 0 0 14px; font-size: 15px; }
+  .step .btn { width: 100%; justify-content: center; text-align: center; box-sizing: border-box; }
+  .more { text-align: start; max-width: 520px; margin: 24px auto 0; }
+  [dir="rtl"] .more, [dir="rtl"] .steps { text-align: right; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/favicon.svg" alt="">Atrium</a>
+    <nav class="nav"><a href="/" data-t="home">Home</a><a href="/privacy" data-t="privacy">Privacy</a></nav>
+  </div>
+</header>
+<main class="doc" style="text-align: center">
+  <div class="langs" role="group" aria-label="Language">
+    <button type="button" data-lang="en">English</button>
+    <button type="button" data-lang="fr">Français</button>
+    <button type="button" data-lang="ar">العربية</button>
+  </div>
+  <img src="/icon-192.png" alt="" style="width: 96px; margin: 0 auto 18px; border-radius: 22px">
+  <h1 data-t="title">Help launch Atrium on Google Play</h1>
+  <p data-t="intro">Atrium lets you practise interviews, presentations and everyday conversations out loud, with live AI people and detailed feedback. To go live on Google Play, it needs testers. It takes two taps on your Android phone.</p>
+
+  <div class="steps">
+    <div class="step">
+      <h2><span class="n">1</span><span data-t="s1">Join the testers</span></h2>
+      <p data-t="s1p" data-html>Opens Google Groups. Sign in with the Gmail you use on Google Play, then tap <strong>Join group</strong>. If you only see “You don't have permission”, open this page in Chrome instead of WhatsApp or Instagram.</p>
+      <a class="btn primary" href="https://groups.google.com/g/atrium-coach-testers/about" target="_blank" rel="noopener" data-t="s1b">Join the testers</a>
+    </div>
+    <div class="step">
+      <h2><span class="n">2</span><span data-t="s2">Install the app</span></h2>
+      <p data-t="s2p" data-html>Tap <strong>Become a tester</strong>, then install Atrium Coach from Google Play.</p>
+      <a class="btn primary" href="https://play.google.com/apps/testing/com.atriumcoach.app" target="_blank" rel="noopener" data-t="s2b">Install Atrium</a>
+    </div>
+  </div>
+
+  <div class="more">
+    <h2 style="font-size: 18px" data-t="thanks">Thank you! One small favour</h2>
+    <p data-t="favour" data-html>Please keep the app installed for <strong>14 days</strong> and try a room or two. New accounts get 20 free live minutes. Ideas or problems? Write to <a href="mailto:hello@atriumcoach.com">hello@atriumcoach.com</a>.</p>
+    <p style="font-size: 14px" data-t="note" data-html>If Google Play says the app isn't available, wait a few minutes after step 1 and try again. On iPhone or a computer? Use Atrium in your browser at <a href="https://app.atriumcoach.com">app.atriumcoach.com</a>.</p>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <span>© 2026 Atrium</span>
+    <nav><a href="/privacy" data-t="terms">Privacy &amp; terms</a><a href="mailto:hello@atriumcoach.com">hello@atriumcoach.com</a></nav>
+  </div>
+</footer>
+<script>
+const T = {
+  en: null,
+  fr: {
+    home: 'Accueil', privacy: 'Confidentialité', terms: 'Confidentialité et conditions',
+    title: 'Aidez Atrium à sortir sur Google Play',
+    intro: "Atrium vous permet de vous entraîner à voix haute aux entretiens, aux présentations et aux conversations du quotidien, avec des personnes IA en direct et un retour détaillé. Pour être publiée sur Google Play, l'appli a besoin de testeurs. Cela prend deux clics sur votre téléphone Android.",
+    s1: 'Rejoindre les testeurs', s1p: 'Ouvre Google Groups. Connectez-vous avec le Gmail de votre Google Play, puis appuyez sur <strong>Rejoindre le groupe</strong>. Si vous voyez « Vous n\'avez pas l\'autorisation », ouvrez cette page dans Chrome plutôt que dans WhatsApp ou Instagram.', s1b: 'Rejoindre les testeurs',
+    s2: "Installer l'appli", s2p: 'Appuyez sur <strong>Devenir testeur</strong>, puis installez Atrium Coach depuis Google Play.', s2b: 'Installer Atrium',
+    thanks: 'Merci ! Un petit service',
+    favour: "Gardez l'appli installée pendant <strong>14 jours</strong> et essayez une ou deux salles. Les nouveaux comptes ont 20 minutes gratuites. Une idée ou un problème ? Écrivez à <a href=\"mailto:hello@atriumcoach.com\">hello@atriumcoach.com</a>.",
+    note: "Si Google Play indique que l'appli n'est pas disponible, attendez quelques minutes après l'étape 1 et réessayez. Sur iPhone ou ordinateur ? Utilisez Atrium dans votre navigateur sur <a href=\"https://app.atriumcoach.com\">app.atriumcoach.com</a>."
+  },
+  ar: {
+    home: 'الرئيسية', privacy: 'الخصوصية', terms: 'الخصوصية والشروط',
+    title: 'ساعدنا في إطلاق Atrium على Google Play',
+    intro: 'يتيح لك Atrium التدرّب بصوت عالٍ على المقابلات والعروض التقديمية ومحادثات الحياة اليومية مع أشخاص بالذكاء الاصطناعي في الوقت الحقيقي، مع ملاحظات مفصّلة. ليُنشر التطبيق على Google Play يحتاج إلى مختبرين. يكفي نقرتان على هاتفك الأندرويد.',
+    s1: 'انضم إلى المختبرين', s1p: 'تُفتح مجموعات Google. سجّل الدخول بحساب Gmail نفسه الذي تستخدمه في Google Play، ثم اضغط على <strong>الانضمام إلى المجموعة</strong>. إذا ظهرت رسالة «ليس لديك إذن»، افتح هذه الصفحة في Chrome بدلًا من واتساب أو إنستغرام.', s1b: 'انضم إلى المختبرين',
+    s2: 'ثبّت التطبيق', s2p: 'اضغط على <strong>أصبح مختبِرًا</strong>، ثم ثبّت Atrium Coach من Google Play.', s2b: 'ثبّت Atrium',
+    thanks: 'شكرًا لك! خدمة صغيرة',
+    favour: 'يُرجى إبقاء التطبيق مثبّتًا لمدة <strong>14 يومًا</strong> وتجربة غرفة أو اثنتين. تحصل الحسابات الجديدة على 20 دقيقة مجانية. لديك فكرة أو مشكلة؟ راسلنا على <a href="mailto:hello@atriumcoach.com">hello@atriumcoach.com</a>.',
+    note: 'إذا ظهر في Google Play أن التطبيق غير متاح، انتظر بضع دقائق بعد الخطوة 1 ثم حاول مجددًا. تستخدم iPhone أو حاسوبًا؟ استخدم Atrium في المتصفح على <a href="https://app.atriumcoach.com">app.atriumcoach.com</a>.'
+  }
+};
+const original = {};
+document.querySelectorAll('[data-t]').forEach((el) => { original[el.dataset.t] = el.innerHTML; });
+function setLang(lang) {
+  const strings = T[lang] || {};
+  document.querySelectorAll('[data-t]').forEach((el) => {
+    const s = strings[el.dataset.t] ?? original[el.dataset.t];
+    if (el.hasAttribute('data-html')) el.innerHTML = s; else el.textContent = s.replace(/<[^>]+>/g, '');
+  });
+  document.documentElement.lang = lang;
+  document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  document.querySelectorAll('.langs button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+  try { localStorage.setItem('atrium-test-lang', lang); } catch (e) {}
+}
+document.querySelectorAll('.langs button').forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
+let start = 'en';
+try { start = localStorage.getItem('atrium-test-lang') || ''; } catch (e) { start = ''; }
+if (!start) { const n = (navigator.language || 'en').slice(0, 2); start = n === 'fr' || n === 'ar' ? n : 'en'; }
+setLang(start);
+</script>
+</body>
+</html>

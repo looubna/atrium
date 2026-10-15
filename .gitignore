@@ -48,3 +48,11 @@ xcuserdata/
 
 # Claude Code local settings (may carry cloud permissions)
 .claude/settings.local.json
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+
+# Android Firebase config (same policy as GoogleService-Info.plist)
+google-services.json

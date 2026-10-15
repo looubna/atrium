@@ -1,0 +1,4 @@
+# Cloudflare Pages (app.atriumcoach.com): the phone app streams room videos from here.
+/video/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=604800

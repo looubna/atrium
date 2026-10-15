@@ -308,7 +308,7 @@ export function MeetingVideo() {
   // A live in-person interview films the room its own way (InPersonInterview).
   const liveInPerson = useAppStore((s) => s.session?.locationId === s.selectedId && isLiveInPerson(s.session))
   const active =
-    view === 'interior' && (zone === 'meeting' || zone === 'theater') && Boolean(base) && !networking && !liveInPerson
+    (view === 'interior' || view === 'exiting') && (zone === 'meeting' || zone === 'theater') && Boolean(base) && !networking && !liveInPerson
 
   const orientation = useOrientation()
   const media = useMeetingMedia(active, base, room, orientation, posture)

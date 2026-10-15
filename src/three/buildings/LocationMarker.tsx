@@ -2,6 +2,7 @@ import { type ComponentType, type SVGProps, useMemo } from 'react'
 import { Html } from '@react-three/drei'
 import { type Camera, type Object3D, Vector3 } from 'three'
 import {
+  IconBrain,
   IconBriefcase,
   IconBus,
   IconChat,
@@ -36,6 +37,7 @@ const GLYPHS: Record<PlaceIcon, ComponentType<SVGProps<SVGSVGElement>>> = {
   language: IconChat,
   target: IconTarget,
   bus: IconBus,
+  brain: IconBrain,
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DEBATE_HALL, DEBATE_TAKES } from '@/data/debateMedia'
 import type { Orientation } from '@/data/inPersonMedia'
 import type { SessionSetup } from '@/data/practice'
@@ -24,12 +24,12 @@ import { firebase, firebaseConfigured } from '@/platform/firebase'
 import { useLiveDocument } from '@/platform/firestore/live'
 import { useAppStore } from '@/state/useAppStore'
 import { AvatarTile } from './AvatarTile'
-import { FramingHint } from './FramingHint'
 import { LecternLaptop } from './LecternLaptop'
 import { RoomTake } from './RoomTake'
 import { Button } from '../ui/Button'
 import { IconVideo, IconVideoOff } from '../ui/Icon'
 import { LeaveArrow, LiveOverlay, SceneCaption } from './LivePanels'
+import { CameraCheck } from './CameraCheck'
 
 /**
  * The debate itself: the two of you across a table.
@@ -344,7 +344,10 @@ function Room({ session }: { session: SessionSetup }) {
         </button>
       )}
 
-      {cameraOn && camera.stream && <SelfView stream={camera.stream} />}
+      {/* In person: your own camera only until you are in frame and talking. */}
+      {cameraOn && camera.stream && (
+        <CameraCheck stream={camera.stream} framing={room.framingStatus} standing={false} micLevel={live.state.micLevel} />
+      )}
 
       {/* Before it starts: the brief, or the wait for it. */}
       {before && (
@@ -387,7 +390,6 @@ function Room({ session }: { session: SessionSetup }) {
         </div>
       )}
 
-      <FramingHint framing={room.framing} />
 
       <LiveOverlay
         live={live}
@@ -466,22 +468,6 @@ function StraightIn({
         Open with your position and your strongest reason. Your opponent will argue back — answer what
         it actually objects to.
       </p>
-    </div>
-  )
-}
-
-/** The user's own camera, small and out of the way, mirrored like a selfie view. */
-function SelfView({ stream }: { stream: MediaStream }) {
-  const video = useRef<HTMLVideoElement>(null)
-  useEffect(() => {
-    const element = video.current
-    if (!element) return
-    element.srcObject = stream
-    element.play().catch(() => {})
-  }, [stream])
-  return (
-    <div className="absolute bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-4 z-10 h-24 w-[4.5rem] overflow-hidden rounded-xl bg-black ring-1 ring-white/15 sm:h-28 sm:w-20">
-      <video ref={video} autoPlay muted playsInline className="size-full -scale-x-100 object-cover" />
     </div>
   )
 }

@@ -127,6 +127,7 @@ class SalesLiveAgentFactory:
             may_end_early=True,
             # A meeting moves quickly: every colleague line is a reply, so it is voiced at once.
             fast_panel_voices=True,
-            # The buyer answers after 0.9 s of silence: at 1.2 s every reply felt like a hang.
-            silence_duration_ms=900,
+            # The buyer answers after 1.2 s of silence. At 0.9 s replies came fast but landed on the
+            # seller's next words whenever they paused to think (2026-10-01).
+            silence_duration_ms=1200,
         )

@@ -125,8 +125,9 @@ class MeetingLiveAgentFactory:
             lead_name=lead.name,
             # A meeting ends when the user closes it.
             may_end_early=True,
-            # Colleague lines are replies: voiced at once. Replies come after 0.9 s of silence — 1.1 s when the
+            # Colleague lines are replies: voiced at once. Replies come after 1.2 s of silence — 1.4 s when the
             # user runs the meeting, since they present at length and a breath between sentences is not the end.
+            # (At 0.9 s Kevin and the lead cut into the user's sentences, 2026-10-01.)
             fast_panel_voices=True,
-            silence_duration_ms=1100 if plan.role is Role.LEADER else 900,
+            silence_duration_ms=1400 if plan.role is Role.LEADER else 1200,
         )

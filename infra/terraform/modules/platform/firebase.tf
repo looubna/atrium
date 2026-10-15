@@ -37,6 +37,16 @@ data "google_firebase_apple_app_config" "ios" {
   app_id   = google_firebase_apple_app.ios.app_id
 }
 
+# The Android app (Samsung Galaxy Store build). Its google-services.json lives in android/app/.
+resource "google_firebase_android_app" "android" {
+  provider        = google-beta
+  project         = var.project_id
+  display_name    = "Atrium Android"
+  package_name    = var.ios_bundle_id # the same app id on both platforms: com.atriumcoach.app
+  deletion_policy = "DELETE"
+  depends_on      = [google_firebase_project.this]
+}
+
 # App Check: the iOS app attests with App Attest (needs the Apple Team ID on the
 # app). Enforcement on Firestore rejects reads without a valid token; the API
 # enforces App Check itself (APP_CHECK_ENFORCED).

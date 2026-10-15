@@ -6,22 +6,25 @@ inside a transaction, so XP and personal bests can't be set by the client.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+from collections import OrderedDict
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from google.cloud import firestore
 
-from app.core.errors import PayloadTooLarge, ServiceUnavailable, UnsupportedMedia, ValidationFailed
+from app.core.errors import NotFound, PayloadTooLarge, ServiceUnavailable, UnsupportedMedia, ValidationFailed
 from app.core.settings import AiProvider, get_settings
 from app.modules.practice.analysis import MAX_SECONDS, RoundInput, analyse_round, decode_to_pcm
 from app.modules.practice.catalog import DRILLS
 from app.modules.practice.progress import apply_round, overview
+from app.platform.ai.tts import Voice, speak_example
 from app.platform.auth.dependencies import AuthUser, current_user
 from app.platform.clients import clients
-from app.platform.firestore.paths import UserPaths, new_id
+from app.platform.firestore.paths import UserPaths, new_id, require_id
 from app.platform.media.ffmpeg import FfmpegError
 from app.platform.ratelimit import rate_limit
 from app.platform.transcripts.stt import SttFailed
@@ -119,7 +122,7 @@ async def submit_round(
     async def save(transaction: firestore.AsyncTransaction) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         snap = await progress_ref.get(transaction=transaction)
         before = (snap.to_dict() or {}) if snap.exists else {}
-        after, awards = apply_round(before, drill, result.values, result.speech_ms, today, user.uid)
+        after, awards = apply_round(before, drill, result.values, result.speech_ms, today, user.uid, prompt_data)
         after["updatedAt"] = firestore.SERVER_TIMESTAMP
         transaction.set(progress_ref, after)
         transaction.set(
@@ -134,6 +137,7 @@ async def submit_round(
                 "transcript": result.transcript[:20_000],
                 "feedback": result.feedback,
                 "skillEvidence": result.skills,
+                "arc": result.arc,
                 "awards": awards.view(),
             },
         )
@@ -166,9 +170,44 @@ async def submit_round(
         "minSpeechSeconds": drill.min_speech_ms // 1000,
         "transcript": result.transcript,
         "timeline": result.timeline,
+        "arc": result.arc,
         "speechMs": result.speech_ms,
         "metrics": metrics,
         "feedback": result.feedback,
         "awards": awards,
         "progress": overview(after, user.uid, today),
     }
+
+
+#: How the Story Course's example retellings are read: a storyteller, not an interview candidate.
+STORY_STYLE = (
+    "Tell this as a warm, skilled storyteller speaking to one friend: a relaxed pace, slower on the key sentences, "
+    "a real pause wherever there is an ellipsis (…), stress on the surprising words, and a lower, quieter voice "
+    "just before a reveal. Natural and sincere, never theatrical."
+)
+#: Replays of the same retelling cost nothing: kept in memory, per attempt and voice.
+_EXAMPLES: OrderedDict[tuple[str, str], tuple[bytes, str]] = OrderedDict()
+_EXAMPLES_SIZE = 64
+
+
+@router.post("/attempts/{attempt_id}/example-audio")
+async def example_audio(
+    attempt_id: str,
+    user: Annotated[AuthUser, Depends(rate_limit("practice_example_audio", limit=60, window_seconds=3600))],
+    voice: Annotated[Voice, Query()] = "warm",
+) -> dict[str, Any]:
+    """The coach's retelling of a Story Course round, read aloud, so the user can hear how it could sound."""
+    await require_consents(user, ConsentKind.AI_PROCESSING)
+    key = (f"{user.uid}/{require_id(attempt_id)}", voice)
+    if key not in _EXAMPLES:
+        attempt = (await clients.firestore().document(UserPaths(user.uid).practice_attempt(attempt_id)).get()).to_dict()
+        text = str((((attempt or {}).get("feedback") or {}).get("model") or {}).get("text") or "").strip()
+        if not text:
+            raise NotFound("this round has no example retelling")
+        spoken = await speak_example(text, voice, style=STORY_STYLE)
+        _EXAMPLES[key] = (spoken.audio, spoken.content_type)
+        if len(_EXAMPLES) > _EXAMPLES_SIZE:
+            _EXAMPLES.popitem(last=False)
+    _EXAMPLES.move_to_end(key)
+    audio, content_type = _EXAMPLES[key]
+    return {"audio": base64.b64encode(audio).decode(), "contentType": content_type}

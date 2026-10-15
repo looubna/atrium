@@ -57,7 +57,8 @@ def _tone_wav(seconds: float = 1.0, rate: int = 16_000) -> bytes:
     return buffer.getvalue()
 
 
-async def speak_example(text: str, voice: Voice = "warm") -> SpokenExample:
+async def speak_example(text: str, voice: Voice = "warm", *, style: str | None = None) -> SpokenExample:
+    """`style` replaces the interview delivery prompt (the Story Course reads its examples as a storyteller)."""
     if not await ai_enabled():
         raise AiUnavailable()
     text = " ".join(text.split())[:MAX_TEXT_CHARS]
@@ -69,7 +70,7 @@ async def speak_example(text: str, voice: Voice = "warm") -> SpokenExample:
     started = time.monotonic()
     try:
         response = await tts.TextToSpeechAsyncClient().synthesize_speech(
-            input=tts.SynthesisInput(text=text, prompt=STYLE_PROMPT),
+            input=tts.SynthesisInput(text=text, prompt=style or STYLE_PROMPT),
             voice=tts.VoiceSelectionParams(language_code="en-US", name=VOICES[voice], model_name=TTS_MODEL),
             audio_config=tts.AudioConfig(audio_encoding=tts.AudioEncoding.MP3),
             timeout=90,
@@ -89,6 +90,17 @@ PANEL_STYLE_PROMPT = (
 )
 PANEL_MAX_CHARS = 600
 PANEL_TIMEOUT_S = 12
+#: Gemini-TTS sometimes says a line twice ("Hi, I'm Daniel... Nice to meet you. Hi, I'm Daniel...").
+#: A line read at a slow 10 characters a second, plus a second, is the longest it can honestly take;
+#: anything longer is a repeat, and the line is voiced again by Chirp 3 HD, which reads text as given.
+PANEL_MIN_CHARS_PER_S = 10
+PANEL_SLACK_S = 1.0
+
+
+def too_long(pcm: bytes, text: str, rate: int) -> bool:
+    """Whether `pcm` (PCM16 mono) runs far longer than `text` can take to say: a repeated line."""
+    seconds = len(pcm) / 2 / rate
+    return seconds > len(text) / PANEL_MIN_CHARS_PER_S + PANEL_SLACK_S
 
 
 async def speak_as_panelist(text: str, voice: str, rate: int = 24_000, *, fast: bool = False) -> bytes:
@@ -107,6 +119,15 @@ async def speak_as_panelist(text: str, voice: str, rate: int = 24_000, *, fast: 
     client = tts.TextToSpeechAsyncClient()
     audio_config = tts.AudioConfig(audio_encoding=tts.AudioEncoding.LINEAR16, sample_rate_hertz=rate)
 
+    async def chirp() -> bytes:
+        response = await synthesize(
+            "chirp3-hd",
+            input=tts.SynthesisInput(text=text),
+            voice=tts.VoiceSelectionParams(language_code="en-US", name=f"en-US-Chirp3-HD-{voice}"),
+        )
+        with wave.open(io.BytesIO(bytes(response.audio_content))) as wav:
+            return bytes(wav.readframes(wav.getnframes()))
+
     async def synthesize(model: str, **request: Any) -> Any:
         started = time.monotonic()
         try:
@@ -117,13 +138,7 @@ async def speak_as_panelist(text: str, voice: str, rate: int = 24_000, *, fast: 
 
     if fast:
         try:
-            response = await synthesize(
-                "chirp3-hd",
-                input=tts.SynthesisInput(text=text),
-                voice=tts.VoiceSelectionParams(language_code="en-US", name=f"en-US-Chirp3-HD-{voice}"),
-            )
-            with wave.open(io.BytesIO(bytes(response.audio_content))) as wav:
-                return bytes(wav.readframes(wav.getnframes()))
+            return await chirp()
         except GoogleAPICallError as exc:
             log.warning("fast panel speech failed", extra={"error": type(exc).__name__})
     try:
@@ -136,14 +151,18 @@ async def speak_as_panelist(text: str, voice: str, rate: int = 24_000, *, fast: 
         # Gemini-TTS is sometimes slow; the same voice from Chirp 3 HD answers in about a second.
         log.warning("panel question speech failed", extra={"error": type(exc).__name__})
         try:
-            response = await synthesize(
-                "chirp3-hd",
-                input=tts.SynthesisInput(text=text),
-                voice=tts.VoiceSelectionParams(language_code="en-US", name=f"en-US-Chirp3-HD-{voice}"),
-            )
+            return await chirp()
         except GoogleAPICallError as fallback_exc:
             log.warning("panel question fallback speech failed", extra={"error": type(fallback_exc).__name__})
             raise AiUnavailable() from fallback_exc
     # LINEAR16 arrives as a WAV file; the call wants the samples.
     with wave.open(io.BytesIO(bytes(response.audio_content))) as wav:
-        return bytes(wav.readframes(wav.getnframes()))
+        pcm = bytes(wav.readframes(wav.getnframes()))
+    if too_long(pcm, text, rate):
+        log.warning("panel speech repeated itself", extra={"data": {"characters": len(text),
+                                                                   "seconds": round(len(pcm) / 2 / rate, 1)}})
+        try:
+            return await chirp()
+        except GoogleAPICallError:
+            pass  # the repeat is better than silence
+    return pcm

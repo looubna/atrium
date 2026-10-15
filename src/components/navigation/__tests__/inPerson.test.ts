@@ -36,8 +36,7 @@ vi.mock('@/modules/interview/live/useLiveInterview', () => ({
     sendCodeSnapshot: vi.fn(),
   }),
 }))
-// Whether the face server is there today. Most of these tests are about the filmed room, which is
-// what the room falls back to when it is not.
+// Whether the face server is there today. The room is the same filmed scene either way.
 const faces = vi.hoisted(() => ({ unavailable: true }))
 vi.mock('@/platform/avatar/useAvatar', () => ({ useAvatar: () => ({ avatar: null, unavailable: faces.unavailable }) }))
 vi.mock('@/lib/useCamera', () => ({ useCamera: () => ({ stream: null, error: null }) }))
@@ -97,55 +96,40 @@ describe('in-person interview', () => {
     liveState.timeLeftMs = 90_000
     const out = html()
     expect(out).toContain('aria-label="Meeting room"')
-    expect(out).toContain('/video/inperson/room/panel/landscape.jpg')
+    expect(out).toContain('/video/inperson/room/panel_face/base.jpg')
     expect(out).toContain('aria-label="Leave the interview"')
     for (const control of ['Speaker', 'End interview', 'Presence coach', 'Time left', 'Interrupt', 'Share screen', 'Mute']) {
       expect(out).not.toContain(control)
     }
   })
 
-  it('films the room the panel is sitting in, on the empty-room photograph', () => {
+  it('shows the room the live face is made from, with or without a face today', () => {
     useAppStore.setState({ interiorZone: 'meeting' })
     liveState.phase = 'live'
-    const out = html()
-    // Every take of the same locked-off frame is mounted, on the photograph that is their poster,
-    // so the change between them is never a clip being fetched.
-    expect(out).toContain('/video/inperson/room/panel/landscape.mp4')
-    expect(out).toContain('/video/inperson/room/panel/landscape_lead.mp4')
-    expect(out).toContain('/video/inperson/room/panel/landscape_colleague.mp4')
-    expect(out).toContain('poster="/video/inperson/room/panel/landscape.jpg"')
+    // No face server today: the same scene, never a different backup picture.
+    expect(html()).toContain('/video/inperson/room/panel_face/base.mp4')
+    expect(html()).not.toContain('/video/inperson/room/panel/')
+    useAppStore.setState({ session: session('one-to-one') })
+    expect(html()).toContain('/video/inperson/room/one_face/base.mp4')
+    expect(html()).not.toContain('/video/inperson/room/one/')
     // With a face server, one to one, the interviewer is at her own desk: the clip her live face is
     // painted on; and the panel sits at its table, the clip their shared face is painted on.
     faces.unavailable = false
-    useAppStore.setState({ session: session('one-to-one') })
     expect(html()).toContain('/video/inperson/room/one_face/base.mp4')
     useAppStore.setState({ session: session('panel') })
     expect(html()).toContain('/video/inperson/room/panel_face/base.mp4')
-    expect(html()).not.toContain('/video/inperson/room/panel/landscape_lead.mp4')
   })
 
-  it('runs the take of whoever has the floor, and only that one', () => {
+  it('keeps the same room whoever has the floor', () => {
     useAppStore.setState({ interiorZone: 'meeting' })
     liveState.phase = 'live'
-    const base = '/video/inperson/room/panel/landscape'
-    const running = (out: string) =>
-      [...out.matchAll(/<video[^>]*src="([^"]+)"[^>]*class="([^"]*)"/g)]
-        .filter(([, , css]) => css.includes('opacity-100'))
-        .map(([, src]) => src)
-
-    // Between turns the room listens.
-    expect(running(html())).toEqual([`${base}.mp4`])
-    // The lead asks a question: the take where the lead is talking.
-    liveState.leadVoicing = true
-    expect(running(html())).toEqual([`${base}_lead.mp4`])
+    const videos = (out: string) => [...out.matchAll(/<video[^>]*src="([^"]+)"/g)].map(([, src]) => src)
+    for (const [lead, colleague] of [[false, null], [true, null], [false, 'Daniel Brooks']] as const) {
+      liveState.leadVoicing = lead
+      liveState.panelSpeaker = colleague
+      expect(videos(html())).toEqual(['/video/inperson/room/panel_face/base.mp4'])
+    }
     liveState.leadVoicing = false
-    // The colleague comes in: the take where the colleague is talking.
-    liveState.panelSpeaker = 'Daniel Brooks'
-    expect(running(html())).toEqual([`${base}_colleague.mp4`])
-    // The note-taker says hello. Nobody filmed her talking, so the room keeps listening rather
-    // than putting the wrong person's mouth in motion.
-    liveState.panelSpeaker = 'Grace Lin'
-    expect(running(html())).toEqual([`${base}.mp4`])
     liveState.panelSpeaker = null
   })
 
@@ -173,7 +157,7 @@ describe('in-person interview', () => {
     expect(out).toContain('Daniel Brooks')
     expect(out).toContain('Team Lead')
     // The room shot stays: nobody is cut to full screen, and nobody leaves the table.
-    expect(out).toContain('/video/inperson/room/panel/landscape.mp4')
+    expect(out).toContain('/video/inperson/room/panel_face/base.mp4')
     liveState.panelSpeaker = null
     liveState.leadVoicing = true
     expect(html()).toContain('Evelyn Ross')

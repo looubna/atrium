@@ -18,7 +18,7 @@ from app.core.errors import BadRequest, NotFound
 
 _ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
 _COMPETENCY_ID = re.compile(r"[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,3}")
-_PERIOD = re.compile(r"(m-\d{4}-\d{2}|d-\d{4}-\d{2}-\d{2})")
+_PERIOD = re.compile(r"(m-\d{4}-\d{2}|d-\d{4}-\d{2}-\d{2}|all)")
 
 
 def new_id() -> str:

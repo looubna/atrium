@@ -9,8 +9,9 @@
  */
 
 import type { Orientation, RoomTakes } from './inPersonMedia'
+import { VIDEO_BASE } from '@/platform/media/videoBase'
 
-export const DEBATE_MEDIA_BASE = '/video/debate/hall'
+export const DEBATE_MEDIA_BASE = `${VIDEO_BASE}/debate/hall`
 
 export const DEBATE_HALL: Record<Orientation, string> = {
   landscape: `${DEBATE_MEDIA_BASE}/landscape_calm.jpg`,

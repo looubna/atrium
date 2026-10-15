@@ -276,3 +276,74 @@ export function PracticeHall({ accent }: ShapeProps) {
     </group>
   )
 }
+
+/* ------------------------------------------------------------------ */
+/* Brain Lab — a small white research clinic on the waterfront, with   */
+/* a glass atrium and a glowing brain on the roof. Not in the Blender  */
+/* city model: it stands where the restaurant was cut out (CUTOUTS).   */
+/* ------------------------------------------------------------------ */
+const BRAIN = '#5fd6de'
+
+export function Lab({ accent }: ShapeProps) {
+  // On the waterfront's own paving, not on a block pad.
+  const G = 0.15
+  return (
+    <group>
+      {/* Forecourt */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, G + 0.01, 1]} receiveShadow>
+        <circleGeometry args={[9.6, 40]} />
+        <meshStandardMaterial color={P.pavement} roughness={0.95} />
+      </mesh>
+
+      {/* Ground floor, a glass band, and the upper floor set back */}
+      <mesh position={[0, G + 2.4, -0.5]} castShadow receiveShadow>
+        <boxGeometry args={[11, 4.8, 8]} />
+        <meshStandardMaterial color={P.trim} roughness={0.7} />
+      </mesh>
+      <Windows width={9} height={0} rows={1} cols={5} y={G + 2.6} z={3.52} pane={[1.3, 2.2]} lit={0.3} />
+      <mesh position={[0, G + 5.6, -0.5]} castShadow receiveShadow>
+        <boxGeometry args={[11.3, 1.6, 8.3]} />
+        <meshStandardMaterial color={P.glassDeep} roughness={0.12} metalness={0.3} />
+      </mesh>
+      <mesh position={[0, G + 7.8, -1]} castShadow receiveShadow>
+        <boxGeometry args={[9.6, 2.8, 6.8]} />
+        <meshStandardMaterial color={P.stoneLight} roughness={0.72} />
+      </mesh>
+      <Windows width={8} height={0} rows={1} cols={5} y={G + 7.8} z={2.42} pane={[1.1, 1.5]} lit={0.2} />
+      <mesh position={[0, G + 9.4, -1]} castShadow receiveShadow>
+        <boxGeometry args={[10, 0.4, 7.2]} />
+        <meshStandardMaterial color={P.roof} roughness={0.82} />
+      </mesh>
+
+      {/* Glass atrium over the entrance */}
+      <mesh position={[0, G + 2.5, 4.3]} castShadow receiveShadow>
+        <boxGeometry args={[4.6, 5, 1.8]} />
+        <meshStandardMaterial color={P.glass} roughness={0.08} metalness={0.25} transparent opacity={0.85} />
+      </mesh>
+      <mesh position={[0, G + 5.1, 4.3]} castShadow>
+        <boxGeometry args={[5, 0.25, 2.2]} />
+        <meshStandardMaterial color={accent} roughness={0.5} />
+      </mesh>
+      <Doorway width={2.4} height={3} z={5.22} accent={P.trim} />
+      <Planters points={[[-4.4, 5.6], [4.4, 5.6]]} y={G} />
+
+      {/* The sign: two glowing hemispheres, a brain read from anywhere in the city */}
+      <group position={[0, G + 11.1, -1]}>
+        <mesh position={[0, -1, 0]} castShadow>
+          <cylinderGeometry args={[0.25, 0.35, 1.6, 10]} />
+          <meshStandardMaterial color={P.concrete} roughness={0.6} />
+        </mesh>
+        {[-1, 1].map((side) => (
+          <mesh key={side} position={[side * 0.72, 0.4, 0]} scale={[0.8, 0.95, 1.25]} castShadow>
+            <sphereGeometry args={[1.05, 20, 14]} />
+            <meshStandardMaterial color={BRAIN} emissive={BRAIN} emissiveIntensity={0.75} roughness={0.35} />
+          </mesh>
+        ))}
+        <mesh position={[0, 0.4, 0]} rotation={[0, Math.PI / 2, 0]}>
+          <torusGeometry args={[1.2, 0.08, 8, 30]} />
+          <meshStandardMaterial color={P.trim} emissive={P.trim} emissiveIntensity={0.4} />
+        </mesh>
+      </group>
+    </group>
+  )
+}

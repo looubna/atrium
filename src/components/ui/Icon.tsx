@@ -198,6 +198,16 @@ export const IconDining = (p: P) => (
   </svg>
 )
 
+/** Two hemispheres and their folds, seen from above: the Brain Lab. */
+export const IconBrain = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M12 4.5v15" />
+    <path d="M12 4.5a3 3 0 0 0-5.3 1.4A3.2 3.2 0 0 0 4.2 10a3.2 3.2 0 0 0 .8 4.6 3.1 3.1 0 0 0 3 4.4c1.7 0 3-.9 4-2.2" />
+    <path d="M12 4.5a3 3 0 0 1 5.3 1.4A3.2 3.2 0 0 1 19.8 10a3.2 3.2 0 0 1-.8 4.6 3.1 3.1 0 0 1-3 4.4c-1.7 0-3-.9-4-2.2" />
+    <path d="M8.2 9.3c.9.1 1.8.7 2.2 1.6M15.8 9.3c-.9.1-1.8.7-2.2 1.6M7.6 14.2c1 0 1.9.5 2.4 1.3M16.4 14.2c-1 0-1.9.5-2.4 1.3" />
+  </svg>
+)
+
 export const IconTree = (p: P) => (
   <svg {...base} {...p}>
     <path d="M12 3a5.5 5.5 0 0 0-4.6 8.5A4.2 4.2 0 0 0 10 18h4a4.2 4.2 0 0 0 2.6-6.5A5.5 5.5 0 0 0 12 3Z" />

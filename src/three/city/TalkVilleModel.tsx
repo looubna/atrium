@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useGLTF } from '@react-three/drei'
-import { Color, type Material, type Mesh, MeshStandardMaterial, type Object3D } from 'three'
+import { BufferAttribute, Color, type Material, type Mesh, MeshStandardMaterial, type Object3D, Vector3 } from 'three'
 
 /**
  * The whole city fabric — ground, bay, roads, park, buildings, trees, cars —
@@ -127,12 +127,101 @@ function windowMaterial(name: string, spec: WindowSpec) {
   return material
 }
 
+/**
+ * Buildings taken out of the model, where the city has changed since the Blender export: every
+ * triangle of `node` whose centre lies in the box (world x/z, above `minY`) is dropped once, on load.
+ * The waterfront restaurant made way for the Brain Lab (drawn by `LabBuilding`); the ground and the
+ * deck stay.
+ */
+export const CUTOUTS: { node: string; center: [number, number]; half: [number, number]; minY: number }[] = [
+  { node: 'TV_Waterfront', center: [23.5, -24.5], half: [11.5, 11.5], minY: 0.25 },
+]
+
+/**
+ * Drops, from `mesh`, every connected piece (a house, a roof, an umbrella: triangles sharing corners)
+ * whose centre lies in one of the boxes. Whole pieces only, so nothing is left half-cut.
+ */
+function cutOut(mesh: Mesh, boxes: typeof CUTOUTS) {
+  const geometry = mesh.geometry
+  const position = geometry.getAttribute('position')
+  if (!position) return
+  const count = geometry.index ? geometry.index.count : position.count
+  const corner = (i: number) => (geometry.index ? geometry.index.getX(i) : i)
+
+  // Corners at the same place are one vertex, even when the export split them (per-face normals).
+  const vertexOf = new Int32Array(position.count)
+  const seen = new Map<string, number>()
+  for (let v = 0; v < position.count; v++) {
+    const key = `${position.getX(v).toFixed(3)},${position.getY(v).toFixed(3)},${position.getZ(v).toFixed(3)}`
+    let id = seen.get(key)
+    if (id === undefined) {
+      id = seen.size
+      seen.set(key, id)
+    }
+    vertexOf[v] = id
+  }
+  const parent = Int32Array.from({ length: seen.size }, (_, i) => i)
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    }
+    return i
+  }
+  for (let i = 0; i + 2 < count; i += 3) {
+    const r0 = find(vertexOf[corner(i)])
+    parent[find(vertexOf[corner(i + 1)])] = r0
+    parent[find(vertexOf[corner(i + 2)])] = r0
+  }
+
+  // Each piece's bounds in world space.
+  const bounds = new Map<number, [number, number, number, number, number]>() // minX, maxX, minY, minZ, maxZ
+  const p = new Vector3()
+  for (let v = 0; v < position.count; v++) {
+    p.fromBufferAttribute(position, v).applyMatrix4(mesh.matrixWorld)
+    const root = find(vertexOf[v])
+    const b = bounds.get(root)
+    if (!b) bounds.set(root, [p.x, p.x, p.y, p.z, p.z])
+    else {
+      b[0] = Math.min(b[0], p.x)
+      b[1] = Math.max(b[1], p.x)
+      b[2] = Math.min(b[2], p.y)
+      b[3] = Math.min(b[3], p.z)
+      b[4] = Math.max(b[4], p.z)
+    }
+  }
+  const dropped = new Set<number>()
+  for (const [root, [x0, x1, y0, z0, z1]] of bounds) {
+    const x = (x0 + x1) / 2
+    const z = (z0 + z1) / 2
+    // The ground and the deck are one big flat piece that reaches under everything: never inside.
+    const inside = boxes.some(
+      (box) =>
+        y0 > box.minY - 0.3 &&
+        x1 - x0 < box.half[0] * 2 &&
+        z1 - z0 < box.half[1] * 2 &&
+        Math.abs(x - box.center[0]) < box.half[0] &&
+        Math.abs(z - box.center[1]) < box.half[1],
+    )
+    if (inside) dropped.add(root)
+  }
+  if (!dropped.size) return
+  const kept: number[] = []
+  for (let i = 0; i + 2 < count; i += 3) {
+    if (!dropped.has(find(vertexOf[corner(i)]))) kept.push(corner(i), corner(i + 1), corner(i + 2))
+  }
+  const IndexArray = position.count > 65535 ? Uint32Array : Uint16Array
+  geometry.setIndex(new BufferAttribute(new IndexArray(kept), 1))
+}
+
 function prepare(root: Object3D) {
   const windows = new Map<string, Material>()
+  root.updateMatrixWorld(true)
 
   for (const top of root.children) {
     const cast = !NO_CAST.has(top.name)
     const receive = !NO_RECEIVE.has(top.name)
+    const cuts = CUTOUTS.filter((c) => c.node === top.name)
     top.traverse((o) => {
       // Only the per-location proxies are raycast targets.
       o.raycast = () => null
@@ -141,6 +230,7 @@ function prepare(root: Object3D) {
 
       mesh.castShadow = cast
       mesh.receiveShadow = receive
+      if (cuts.length) cutOut(mesh, cuts)
 
       const original = mesh.material as Material
       const recolour = RECOLOUR[original.name]

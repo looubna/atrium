@@ -58,7 +58,7 @@ async def test_factory_builds_the_session() -> None:
     # One question at a time, and not many: two each for the partner and the associate.
     assert [m.questions for m in panel.panel] == [2, 2]
     assert "ONE question per turn" in panel.system_instruction and "about six" in panel.system_instruction
-    assert "One question at a time" in solo.system_instruction and solo.silence_duration_ms == 900
+    assert "One question at a time" in solo.system_instruction and solo.silence_duration_ms == 1200
     assert "Naming a colleague never makes them speak" in panel.system_instruction
     assert "Never call give_floor for Robert" in panel.system_instruction
 

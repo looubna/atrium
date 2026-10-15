@@ -1,0 +1,10 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -t, us-east4-docker.pkg.dev/atrium-coach-app/atrium/atrium-face:latest, -t, europe-west4-docker.pkg.dev/atrium-coach-app/atrium/atrium-face:latest, .]
+images:
+  - us-east4-docker.pkg.dev/atrium-coach-app/atrium/atrium-face:latest
+  - europe-west4-docker.pkg.dev/atrium-coach-app/atrium/atrium-face:latest
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 200
+timeout: 3600s

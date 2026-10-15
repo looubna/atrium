@@ -17,6 +17,11 @@ const config: CapacitorConfig = {
     backgroundColor: '#07090c',
   },
   plugins: {
+    // Android lays the screen out itself (MainActivity): below the status bar in portrait, full screen in
+    // landscape. Capacitor's own handling padded the notch side, leaving a grey strip in landscape rooms.
+    SystemBars: {
+      insetsHandling: 'disable',
+    },
     FirebaseAuthentication: {
       // Sign in natively, then hand the credential to the Firebase JS SDK the app already uses.
       skipNativeAuth: true,

@@ -23,6 +23,8 @@ provider "google-beta" {
 
 module "platform" {
   source = "../../modules/platform"
+  # RevenueCat secrets exist in Secret Manager (created 2026-09-27); the API reads them.
+  revenuecat_enabled = true
 
   project_id           = local.project_id
   env                  = "dev"
@@ -38,6 +40,7 @@ module "platform" {
 
   app_origins = [
     "capacitor://localhost",
+    "https://localhost", # the Android app (Capacitor's WebView origin)
     "http://localhost:5173",
     "http://localhost:4173",
   ]
@@ -64,3 +67,10 @@ output "platform" {
     firebase_web_config        = module.platform.firebase_web_config
   }
 }
+
+# Created through the Firebase API on 2026-09-27 for the Galaxy Store build; adopted by Terraform here.
+import {
+  to = module.platform.google_firebase_android_app.android
+  id = "projects/atrium-coach-dev/androidApps/1:524974732273:android:e7504ecc8dbb92be4e8a50"
+}
+

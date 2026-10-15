@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, TypeVar
 
@@ -78,6 +78,7 @@ class Purpose(StrEnum):
     LANGUAGE_PLAN = "language_plan"
     LANGUAGE_TIP = "language_tip"
     LANGUAGE_WRAPUP = "language_wrapup"
+    BRAIN_PLAN = "brain_plan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +212,11 @@ def profile_for(purpose: Purpose, settings: Settings) -> ModelProfile:
             return ModelProfile(
                 model, location, temperature=0.2, max_output_tokens=600, timeout_s=20, thinking_level="LOW"
             )
+        case Purpose.BRAIN_PLAN:
+            # The Brain Lab's consultation report (insights, solutions with steps, the plan): long output.
+            return ModelProfile(
+                model, location, temperature=0.3, max_output_tokens=10_000, timeout_s=120, thinking_level="LOW"
+            )
         case Purpose.LANGUAGE_WRAPUP:
             # New words and whether the objective was met, after the conversation.
             return ModelProfile(
@@ -249,6 +255,15 @@ def static_instruction(text: str) -> Callable[[Any], str]:
         return text
 
     return provider
+
+
+def fallback_profile(profile: ModelProfile, settings: Settings) -> ModelProfile | None:
+    """The same work on the fallback model, or None when there is none. Thinking levels are a Gemini 3
+    setting, so the fallback runs with its own default."""
+    model = settings.text_fallback_model
+    if not model or model == profile.model:
+        return None
+    return replace(profile, model=model, thinking_level=None)
 
 
 def _gemini(profile: ModelProfile, settings: Settings) -> Any:
@@ -371,17 +386,23 @@ class ModelGateway:
                 tokens["output"] += output_tokens(meta)
             return None
 
-        agent = Agent(
-            name=purpose.value,
-            model=_gemini(profile, settings),
-            instruction=static_instruction(instruction),
-            output_schema=schema,
-            tools=tools or [],
-            generate_content_config=_content_config(profile, low_media_resolution=bool(media)),
-            after_model_callback=record_usage,
-        )
         session_service = InMemorySessionService()
-        runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
+
+        def runner_for(p: ModelProfile) -> Runner:
+            agent = Agent(
+                name=purpose.value,
+                model=_gemini(p, settings),
+                instruction=static_instruction(instruction),
+                output_schema=schema,
+                tools=tools or [],
+                generate_content_config=_content_config(p, low_media_resolution=bool(media)),
+                after_model_callback=record_usage,
+            )
+            return Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
+
+        # Read by `run_once` at call time, so switching to the fallback switches the next attempt.
+        runner, model_used = runner_for(profile), profile.model
+        fallback = fallback_profile(profile, settings)
         run_config = RunConfig(
             max_llm_calls=profile.max_llm_calls,
             streaming_mode=StreamingMode.SSE if on_text is not None else StreamingMode.NONE,
@@ -421,7 +442,16 @@ class ModelGateway:
         outcome = "ok"
         final_text = ""
         try:
-            final_text = await call_with_busy_retry(run_once, on_wait=on_wait)
+            try:
+                # With a fallback, the newest model gets two retries (~9 s), not the full ~41 s.
+                delays = BUSY_RETRY_DELAYS[:2] if fallback else BUSY_RETRY_DELAYS
+                final_text = await call_with_busy_retry(run_once, on_wait=on_wait, delays=delays)
+            except ModelBusy:
+                if fallback is None:
+                    raise
+                log.info("model busy; using fallback", extra={"purpose": purpose.value, "fallback": fallback.model})
+                runner, model_used = runner_for(fallback), fallback.model
+                final_text = await call_with_busy_retry(run_once, on_wait=on_wait, delays=BUSY_RETRY_DELAYS[:1])
         except TimeoutError:
             outcome = "timeout"
             raise StructuredOutputError(f"{purpose.value} timed out") from None
@@ -439,7 +469,7 @@ class ModelGateway:
                 "ai_usage",
                 extra={
                     "purpose": purpose.value,
-                    "model": profile.model,
+                    "model": model_used,
                     "tokens": tokens["total"],
                     "inputTokens": tokens["input"],
                     "outputTokens": tokens["output"],

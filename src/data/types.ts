@@ -16,6 +16,8 @@ export type BuildingKind =
   | 'busStop'
   | 'practice'
   | 'park'
+  /** The Brain Lab: not in the Blender city model, drawn from code (`exterior`). */
+  | 'lab'
 
 /** Glyphs for the floating labels. */
 export type PlaceIcon =
@@ -28,6 +30,7 @@ export type PlaceIcon =
   | 'language'
   | 'target'
   | 'bus'
+  | 'brain'
 
 export interface Category {
   id: CategoryId
@@ -77,4 +80,9 @@ export interface Location {
   arrival?: 'meeting' | 'theater'
   /** A screen of its own, opened from the panel instead of practice areas (the Language Center). */
   opens?: 'language'
+  /**
+   * The building isn't part of the Blender city model: the city draws `EXTERIORS[kind]` here
+   * (the Brain Lab, which replaced the waterfront restaurant; see `CUTOUTS` in TalkVilleModel).
+   */
+  exterior?: boolean
 }

@@ -9,6 +9,9 @@ import { useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
 import { IconMic, IconMicOff, IconPhoneOff, IconVideo, IconVideoOff } from '../ui/Icon'
 import { AvatarTile } from './AvatarTile'
+import { RotateHint } from './RotateHint'
+import { CameraCheck } from './CameraCheck'
+import { VIDEO_BASE } from '@/platform/media/videoBase'
 
 /**
  * Sales practice: the user sells to Claire (a prospect, a buyer, a client) or pitches Robert, Priya
@@ -25,7 +28,7 @@ import { AvatarTile } from './AvatarTile'
 
 type Person = { key: string; name: string; role: string }
 
-const MEDIA = '/video/sales'
+const MEDIA = `${VIDEO_BASE}/sales`
 /** The shot for each kind of session: its filmed loop and first frame. */
 const shot = (name: string) => ({
   loop: `${MEDIA}/${name}.mp4`,
@@ -428,19 +431,17 @@ export function LiveDealRoom({
       role="region"
       aria-label={label}
     >
+      {investors && <RotateHint who="all three investors" />}
+      {/* In person: your own camera only until you are in frame and talking. */}
+      {inRoom && joined && cameraOn && (
+        <CameraCheck stream={camera.stream} framing={room.framingStatus} standing={false} micLevel={live.state.micLevel} />
+      )}
       {inRoom ? (
         // In person: the room from the seller's chair, the whole screen, and nothing drawn into it.
         <div className="absolute inset-0 overflow-hidden">
           <img src={roomShot.still} alt="" className="absolute inset-0 size-full scale-110 object-cover blur-xl" />
-          {/* Three people across a table do not fit an upright phone cropped to fill it: there the
-              shot is shown whole, over a blur of itself. */}
-          <div
-            className={cn(
-              'absolute inset-0',
-              investors &&
-                '[@media(orientation:portrait)]:inset-auto [@media(orientation:portrait)]:inset-x-0 [@media(orientation:portrait)]:top-1/2 [@media(orientation:portrait)]:aspect-video [@media(orientation:portrait)]:-translate-y-1/2',
-            )}
-          >
+          {/* The room fills the screen; three people across a table ask an upright phone to turn. */}
+          <div className="absolute inset-0">
             <img src={roomShot.still} alt="" className="absolute inset-0 size-full object-cover" />
             <Loop src={roomShot.loop} poster={roomShot.still} className="inset-0 size-full object-cover" />
             {renderer && (
@@ -535,7 +536,7 @@ export function LiveDealRoom({
 
       {/* Before joining: the briefing, then in. */}
       {!joined && (
-        <div className="absolute inset-0 z-10 grid place-items-center bg-black/55 p-4 backdrop-blur-[2px]">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]">
           <div className="glass flex max-h-[88%] w-full max-w-lg flex-col rounded-2xl p-5">
             <div className="min-h-0 overflow-y-auto pr-1">
               {briefing ? (

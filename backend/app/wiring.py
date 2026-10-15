@@ -8,7 +8,11 @@ from __future__ import annotations
 from app.core.settings import Env, get_settings
 from app.modules import (
     admission,
+    brainlab,
+    busstop,
+    cafe,
     debate,
+    emotional,
     exam,
     interview,
     language,
@@ -22,6 +26,7 @@ from app.modules import (
 from app.modules.practice.api import router as practice_router
 from app.modules.registry import registry
 from app.platform.agents.live_gateway import router as live_router
+from app.platform.billing import router as billing_router
 from app.platform.competencies.api import router as competencies_router
 from app.platform.deletion import router as deletion_router
 from app.platform.faces.api import router as faces_router
@@ -38,7 +43,7 @@ from app.platform.users import router as users_router
 
 api_routers = [
     users_router, deletion_router, sessions_router, video_router, face_metrics_router, examples_router,
-    competencies_router, live_router, practice_router, faces_router,
+    competencies_router, live_router, practice_router, faces_router, billing_router,
 ]
 if get_settings().app_env in (Env.LOCAL, Env.TEST):
     api_routers += [local_router, local_upload_router]
@@ -57,3 +62,7 @@ registry.register(negotiation.descriptor())
 registry.register(meeting.descriptor())
 registry.register(presentation.descriptor())
 registry.register(language.descriptor())
+registry.register(emotional.descriptor())
+registry.register(brainlab.descriptor())
+registry.register(cafe.descriptor())
+registry.register(busstop.descriptor())

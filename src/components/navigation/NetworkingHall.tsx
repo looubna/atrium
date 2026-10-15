@@ -17,6 +17,7 @@ import { createNetworkingSession } from '@/modules/networking/api'
 import { useAppStore } from '@/state/useAppStore'
 import { IconArrowLeft, IconMic, IconMicOff, IconUser } from '../ui/Icon'
 import { AvatarTile } from './AvatarTile'
+import { RotateHint } from './RotateHint'
 
 const [FW, FH] = NETWORKING_FRAME
 const ASPECT = FW / FH
@@ -307,7 +308,8 @@ export function NetworkingHall() {
   const networking = useNetworking()
   const setSceneCovered = useAppStore((s) => s.setSceneCovered)
   const openFeedback = useAppStore((s) => s.openFeedback)
-  const active = view === 'interior' && zone !== 'door' && Boolean(networking)
+  // Still up while the building fades out on leaving, so the bare 3D interior never shows.
+  const active = (view === 'interior' || view === 'exiting') && zone !== 'door' && Boolean(networking)
 
   const root = useRef<HTMLDivElement>(null)
   // The hall mounts only while active, so measure again once it does.
@@ -427,6 +429,8 @@ export function NetworkingHall() {
         drag.current = null
       }}
     >
+      {/* Upright, the hall is a slice to drag across; sideways it is all on screen. */}
+      {!focus && <RotateHint who="the whole hall" />}
       {sw > 0 && (
         <div className="absolute left-0 top-0" style={{ width: sw, height: sh, transform: `translate(${baseX}px, ${baseY}px)` }}>
           <img

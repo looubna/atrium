@@ -91,6 +91,7 @@ from app.platform.clients import clients
 from app.platform.firestore.paths import UserPaths, is_valid_id, live_session_path
 from app.platform.jobs.processing import enqueue_session_processing
 from app.platform.media.tracks import SAMPLE_RATES, TrackWriter, pcm_duration_ms
+from app.platform.plans import live_minutes
 from app.platform.runtime_config import ai_enabled
 from app.platform.sessions import EndReason, SessionStatus, mark_ended, mark_live
 from app.platform.storage.objects import user_content
@@ -139,10 +140,12 @@ PANEL_CHUNK_BYTES = 24_000 * 2 // 5  # 200 ms of 24 kHz PCM16
 RESUME_MESSAGE = "[The connection was restored. Continue the interview from where it left off.]"
 #: The model sometimes ends a session minutes in (a rude remark, a garbled answer). Before this share
 #: of the time has passed it may not: the candidate can always leave themselves.
-MODEL_END_MIN_SHARE = 0.5
+#: How many times a too-early goodbye is answered with "carry on" (after that the user can end it).
+MAX_EARLY_GOODBYE_NOTES = 3
 EARLY_END_NOTE = (
-    "[The session is not over: most of the time is still left. Do not say goodbye. Carry on with your "
-    "next question. Only the candidate can end early, and they have not asked to.]"
+    "[The session is not over: the user chose how long to practise and time is still left. Do not say "
+    "goodbye. Carry on the conversation: ask your next question or take it somewhere new. Only the user "
+    "can end early, and they have not asked to.]"
 )
 def hellos_done_note(greeted: Sequence[str]) -> str:
     """What the lead is told once its colleagues have introduced themselves.
@@ -194,6 +197,20 @@ _INVITES_QUESTIONS = re.compile(
 #: With `one_question_per_turn`: after a question, a colleague may not ask another until the user has
 #: spoken at least this long. A breath at the start of an answer is not an answer.
 MIN_ANSWER_MS = 3_000
+#: A question is answered once the user has made this much voiced sound after it (a "Yes." is
+#: about this long), or said any word the transcript caught.
+ANSWERED_MS = 300
+#: A second question this soon after the first, with no answer between, is a double reply (the
+#: model's own late reply on top of the one a note asked for), not a re-prompt after a silence.
+BACK_TO_BACK_S = 10.0
+#: The user's latest audio had voice this close to its end (on the audio's own clock): a reply
+#: starting now would talk over them.
+TALKING_NOW_MS = 300
+#: A colleague's line waits for the user to pause this long before it plays (a breath mid-sentence
+#: is shorter), and for at most this long: a user still talking by then has moved on, and the line
+#: is dropped rather than said over them.
+COLLEAGUE_PAUSE_MS = 700
+COLLEAGUE_HOLD_S = 5.0
 #: Output transcript arriving this soon after a turn ends is that turn's, not a new reply.
 LATE_TRANSCRIPT_S = 2.0
 RELEASE_QUIET_S = 1.0
@@ -206,6 +223,35 @@ RELEASE_NUDGE = (
     "[The speaker is waiting for your questions and nobody has spoken. Speak now, out loud: as the chair, "
     "ask the first question, or bring in a colleague with give_floor.]"
 )
+
+
+#: A turn that ends on a goodbye. The model often says it without calling end_interview, then has
+#: nothing more to say: the user talks on to silence. Only the turn's last words count, so "before
+#: we say goodbye, one more question?" or "take care of the report" end nothing.
+_FAREWELL = re.compile(
+    r"\b(good ?bye|bye(?: now| for now)?|take care|see you(?: (?:later|soon|around|tomorrow|next time|then))?|"
+    r"have a (?:good|great|nice|lovely|wonderful) (?:day|evening|night|weekend|one|rest of your day)|"
+    r"talk (?:to you )?soon|catch you later)\b[\s!.,]*(?:[A-Z][a-z]+[\s!.]*)?$",
+    re.IGNORECASE,
+)
+
+
+def says_goodbye(text: str) -> bool:
+    """Whether a turn ends on a farewell (its last words), not merely mentions one."""
+    return bool(_FAREWELL.search(text.strip()[-80:]))
+
+
+#: The user taking their leave: only then may the other side close before the time they chose.
+_USER_LEAVING = re.compile(
+    r"\b(good ?bye|bye|see you|take care|i (?:have|need|got) to go|i(?:'ve| have)? gotta go|i(?:'m| am) "
+    r"(?:leaving|off|done)|let'?s (?:stop|end|finish)(?: here| now| it)?|that'?s all(?: for (?:today|now))?|"
+    r"end (?:the|this) (?:call|conversation|session|interview|meeting))\b",
+    re.IGNORECASE,
+)
+
+
+def user_is_leaving(text: str) -> bool:
+    return bool(_USER_LEAVING.search(text))
 
 
 def invites_questions(text: str) -> bool:
@@ -465,6 +511,20 @@ class LiveGateway:
         # Whether the last finished turn put a question, and how long the user has spoken since.
         self.last_turn_asked = False
         self.answer_ms = 0
+        # Every room: the user's voiced sound since the last finished turn, and when a note last
+        # asked the model to speak (a turn it asked for is never a double reply).
+        self.spoke_ms = 0
+        self.noted_at = 0.0
+        # The user has said goodbye (or asked to stop): the conversation may close before its time.
+        self.user_leaving = False
+        # What the user has said since the other side last finished a turn: whom they called on.
+        self.user_turn_text = ""
+        self.early_goodbyes = 0
+        self.carry_on_sent = False
+        self.voiced_media_ms = -1
+        # A reply has already been held back for this answer: the next one plays whatever happens,
+        # so a noisy room that never sounds quiet can't keep the other side silent.
+        self.held_back = False
         self.release_note = ""
         self.opening_heard = False
         # A reply the model began while the floor was held: discarded to its end, even past a release.
@@ -593,8 +653,8 @@ class LiveGateway:
             raise _Closed(CloseCode.UNAVAILABLE, "temporarily unavailable")
 
         _, limits = await plan_limits(self.user)
-        used = (await UsageService(self.db).totals(self.uid, Period.MONTH))[Metric.LIVE_SECONDS.value]
-        self.quota_remaining_ms = max(0, limits.live_minutes_month * 60 - used) * 1000
+        # The free trial's lifetime minutes, or the paid plan's month (and day, for fair use).
+        self.quota_remaining_ms = int((await live_minutes(self.db, self.uid, limits))["leftSeconds"] or 0) * 1000
         if self.quota_remaining_ms < 30_000:
             raise _Closed(CloseCode.QUOTA, "live minutes exhausted")
         self.max_duration_ms = min(
@@ -669,6 +729,7 @@ class LiveGateway:
         except Exception:
             log.exception("live engine connect failed")
             raise _Closed(CloseCode.UNAVAILABLE, "interviewer unavailable") from None
+        self._note_sends(self.conn)
 
         mark("engine")
         await self.db.document(live_session_path(self.session_id)).set(self.state.to_doc(), merge=True)
@@ -816,7 +877,11 @@ class LiveGateway:
             self.state.media_ms, frame.capture_ms + pcm_duration_ms(len(frame.pcm), SAMPLE_RATES[Track.CANDIDATE])
         )
         self.tracks[Track.CANDIDATE].append(frame.seq, frame.capture_ms, frame.pcm)
-        if (self.hold_floor or self.one_question_per_turn) and frame_rms(frame.pcm) >= SPEECH_RMS:
+        voiced = frame_rms(frame.pcm) >= SPEECH_RMS
+        if voiced:
+            self.spoke_ms += pcm_duration_ms(len(frame.pcm), SAMPLE_RATES[Track.CANDIDATE])
+            self.voiced_media_ms = self.state.media_ms
+        if (self.hold_floor or self.one_question_per_turn) and voiced:
             self.last_voice_at = time.monotonic()
             self.answer_ms += pcm_duration_ms(len(frame.pcm), SAMPLE_RATES[Track.CANDIDATE])
         if self.pending_opening is not None:
@@ -911,6 +976,8 @@ class LiveGateway:
             if isinstance(event, AudioOut):
                 if self.held:
                     self.muted_turn = True
+                if not self.in_interviewer_turn and self._unwanted_turn():
+                    self.muted_turn = True
                 if self.drop_model_turn or self.muted_turn:
                     continue
                 self.heard_since_note = True
@@ -918,6 +985,17 @@ class LiveGateway:
                 self.lead_spoke_this_turn = True
                 await self._on_interviewer_audio(event.pcm)
             elif isinstance(event, OutputText):
+                # A new turn's words often come before its audio, so they are checked too. Words
+                # this soon after a turn may still be that turn's: those are only kept off the
+                # screen, and the turn's first audio decides whether it is held back.
+                if not self.in_interviewer_turn and not self.muted_turn:
+                    late = time.monotonic() - self.turn_done_at <= LATE_TRANSCRIPT_S
+                    if self._unwanted_turn(commit=not late):
+                        if late:
+                            continue
+                        self.muted_turn = True
+                if self.muted_turn and not self.held:
+                    continue  # a discarded turn: nothing of it is shown, nor stands the backstop down
                 # The model is replying, so the candidate is plainly not still waiting: stand the
                 # backstop down now rather than at its deadline. Its transcript arrives with the
                 # first audio at the latest, and often before it — but it also keeps arriving during
@@ -938,10 +1016,14 @@ class LiveGateway:
             elif isinstance(event, InputText):
                 if event.text.strip():
                     self.last_activity = time.monotonic()
+                    self.spoke_ms = max(self.spoke_ms, ANSWERED_MS)
                     # The user is speaking, so the window for the model's (discarded) reply to
                     # a silent note is over: whatever it says next is an answer to them.
                     if self.drop_model_turn:
                         self.drop_model_turn = False
+                if user_is_leaving(event.text):
+                    self.user_leaving = True
+                self.user_turn_text = (self.user_turn_text + " " + event.text)[-600:]
                 self.candidate_text.add(event.text, event.finished, self.state.media_ms)
                 if self.held and event.finished and invites_questions(event.text):
                     await self._release()
@@ -951,7 +1033,14 @@ class LiveGateway:
                 # Said out loud and written up: the student reads the numbers off the board.
                 await self.send_json({"type": "board_write", "text": event.text, "mediaMs": self.state.media_ms})
             elif isinstance(event, Interrupted):
-                if self.drop_model_turn or self.muted_turn or self.held or not self.in_interviewer_turn:
+                # Why a sentence stopped half-way: the model heard the user (or the room) start.
+                log.info("model interrupted", extra={"data": {
+                    "inTurn": self.in_interviewer_turn, "turnSeq": self.state.interviewer_turn_seq,
+                    "spokeMs": self.spoke_ms}})
+                if self.muted_turn and not self.held:
+                    self.muted_turn = False  # the held-back reply is over; the next one is heard
+                    continue
+                if self.drop_model_turn or self.held or not self.in_interviewer_turn:
                     # Nothing of the lead's is playing from this generation: queued panel turns keep playing.
                     continue
                 self.in_interviewer_turn = False
@@ -973,7 +1062,11 @@ class LiveGateway:
                 self.turn_done_at = time.monotonic()
                 self.turn_end.reset()
                 self.last_turn_asked = "?" in self.lead_turn_text or self.questions_this_turn > 0
+                said_goodbye = says_goodbye(self.lead_turn_text)
+                carry_on_sent, self.carry_on_sent = self.carry_on_sent, False
                 self.lead_turn_text, self.questions_this_turn, self.answer_ms = "", 0, 0
+                self.spoke_ms, self.held_back = 0, False
+                self.user_turn_text = ""
                 if self.release_reply_text is not None:
                     # The model's own first reply after the release is over. A real question starts
                     # the Q&A by itself; a filler does not, so the note follows it.
@@ -988,6 +1081,18 @@ class LiveGateway:
                         if filler:
                             await self._send_release_note()
                 opening = (self.state.interviewer_turn_seq, self.interviewer_turn_bytes // 48)
+                if said_goodbye and self.end_requested_at is None:
+                    if self._may_end_now():
+                        # The goodbye has been said: the conversation ends once it has played, as if
+                        # end_interview had been called, instead of leaving the user talking to no one.
+                        log.info("goodbye heard: ending")
+                        self.end_requested_at = time.monotonic()
+                    elif self.early_goodbyes < MAX_EARLY_GOODBYE_NOTES and not carry_on_sent:
+                        # Too early: the user's time is not up. Told to carry on, so the goodbye is
+                        # followed by more conversation rather than by silence.
+                        self.early_goodbyes += 1
+                        log.info("early goodbye: carrying on", extra={"elapsedMs": self.elapsed_ms()})
+                        await self.conn.send_text(EARLY_END_NOTE)
                 self.in_interviewer_turn = False
                 self.lead_spoke_this_turn = False
                 await self.send_json({"type": "turn_complete", "turnSeq": self.state.interviewer_turn_seq})
@@ -1013,23 +1118,112 @@ class LiveGateway:
                 self.pending_input_tokens += event.prompt_tokens
                 self.pending_output_tokens += event.response_tokens
             elif isinstance(event, EndRequested) and self.end_requested_at is None:
-                if self.held:
+                if self.muted_turn and not self.held:
+                    # A goodbye the user never heard (its turn was held back) does not end the talk.
+                    log.info("end ignored: said in a held-back reply")
+                elif self.held:
                     log.info("end ignored: the user holds the floor")
-                elif not self.may_end_early and self.elapsed_ms() < self.max_duration_ms * MODEL_END_MIN_SHARE:
+                elif not self._may_end_now() and not event.reason.lower().startswith("abuse"):
                     log.info("early end ignored", extra={"elapsedMs": self.elapsed_ms(), "reason": event.reason})
-                    if not self.early_end_refused:
-                        self.early_end_refused = True
+                    if self.early_goodbyes < MAX_EARLY_GOODBYE_NOTES:
+                        self.early_goodbyes += 1
+                        self.carry_on_sent = True  # this turn's goodbye needs no second note
                         await self.conn.send_text(EARLY_END_NOTE)
                 else:
+                    if event.reason.lower().startswith("abuse"):
+                        log.info("ending: repeated abuse", extra={"elapsedMs": self.elapsed_ms()})
                     self.end_requested_at = time.monotonic()
             elif isinstance(event, PanelTurn):
-                if not self.held:
+                # A colleague's line belongs to the lead's turn: held back with it when that turn is.
+                if not self.held and not self.muted_turn:
                     await self._colleague_speaks(event)
             elif isinstance(event, EngineError):
                 log.error("live engine error", extra={"engineCode": event.code})
                 raise _Closed(CloseCode.UNAVAILABLE, "interviewer unavailable")
         # The engine stream ended without an explicit end: let the client reconnect.
         raise _Closed(CloseCode.UNAVAILABLE, "interviewer disconnected")
+
+    async def _user_paused(self) -> bool:
+        """Wait until the user is not mid-sentence; False if they are still talking after the hold.
+
+        The model decides the user has finished after a short silence, and in a meeting its reply is
+        often a colleague's line. Played the moment it is ready, that line lands on the user's next
+        words. The user's own audio (on its clock) says whether they have really stopped.
+        """
+        assert self.state is not None
+        deadline = time.monotonic() + COLLEAGUE_HOLD_S
+        while True:
+            talking = (
+                self.voiced_media_ms >= 0
+                and self.state.media_ms - self.voiced_media_ms < COLLEAGUE_PAUSE_MS
+            )
+            if not talking:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.1)
+
+    def _may_end_now(self) -> bool:
+        """Whether the other side may close the conversation now.
+
+        The user chose how long to practise, and gets that time: the other side closes only in the
+        last minute (once told to wrap up), or once the user has said goodbye or asked to stop.
+        """
+        if self.user_leaving or self.warned_wrap_up:
+            return True
+        return self.elapsed_ms() >= self.max_duration_ms - WRAP_UP_WARNING_MS
+
+    def _note_sends(self, conn: Any) -> None:
+        """Remember when a note asks the model to speak, whichever code path sends it."""
+        send_text = conn.send_text
+
+        async def noted(text: str) -> None:
+            self.noted_at = time.monotonic()
+            # A note starts a new reply: a turn held back before it must not mute that one too.
+            if self.muted_turn and not self.held:
+                self.muted_turn = False
+            await send_text(text)
+
+        conn.send_text = noted
+
+    def _unwanted_turn(self, *, commit: bool = True) -> bool:
+        """Whether a turn starting now is one the user must not hear. Two kinds:
+
+        - a second question before the first was answered: soon after a question, with no word from
+          the user and no note asking for it (after a note, an opening, a hand-over or a held floor
+          the next turn is expected; after a long silence, asking again is what a person would do);
+        - a reply that would talk over the user, who is speaking at this moment (usually the
+          model's own late reply to an answer a note already had it reply to).
+
+        Such a turn is discarded whole, like a reply to a held floor. The model hears the user go
+        on, and replies once they have finished; if it does not, the end-of-turn backstop, still
+        armed, prompts it. At most one turn is held back per answer. `commit=False` only asks.
+        """
+        if not self.opening_heard or self.drop_model_turn or self.muted_turn or self.held:
+            return False
+        if self.release_pending or self.release_reply_text is not None:
+            return False
+        now = time.monotonic()
+        if self.held_back:
+            return False
+        assert self.state is not None
+        talking = self.voiced_media_ms >= 0 and self.state.media_ms - self.voiced_media_ms < TALKING_NOW_MS
+        if talking and self.spoke_ms >= ANSWERED_MS:
+            if commit:
+                log.info("reply over the user dropped", extra={"sessionId": self.session_id})
+                self.held_back = True
+            return True
+        if (
+            self.last_turn_asked
+            and self.noted_at <= self.turn_done_at
+            and self.spoke_ms < ANSWERED_MS
+            and now - self.turn_done_at < BACK_TO_BACK_S
+        ):
+            if commit:
+                log.info("double question dropped", extra={"sessionId": self.session_id})
+                self.held_back = True
+            return True
+        return False
 
     async def _on_interviewer_audio(self, pcm: bytes) -> None:
         assert self.state is not None
@@ -1117,6 +1311,9 @@ class LiveGateway:
         pcm = await voiced if voiced is not None else await self._voice(text, voice)
         if pcm is None:
             return None
+        if not await self._user_paused():
+            log.info("colleague line dropped: the user kept talking", extra={"data": {"purpose": purpose}})
+            return None
         if self.in_interviewer_turn:
             # Whoever is speaking has not finished being heard. Streaming the next line now is what
             # puts two of them on top of each other: each has its own face, each face runs behind
@@ -1177,6 +1374,10 @@ class LiveGateway:
         """
         assert self.state is not None
         if member.questions is None:
+            return True
+        # The user asked this colleague by name ("Kevin, what's your final view?"): they answer,
+        # whatever their share. The share limits interjections nobody asked for.
+        if re.search(rf"\b{re.escape(member.first_name)}\b", self.user_turn_text, re.IGNORECASE):
             return True
         return (
             self.state.panel_asked.count(member.name) < member.questions
@@ -1510,7 +1711,12 @@ class LiveGateway:
         if cost:
             values[Metric.EST_COST_MICROS] = cost
         if delta_seconds > 0 or self.pending_tokens:
-            await UsageService(self.db).record(self.uid, values, period=Period.MONTH)
+            usage = UsageService(self.db)
+            await usage.record(self.uid, values, period=Period.MONTH)
+            if delta_seconds > 0:
+                # The trial counts minutes for the account's life; fair use counts them per day.
+                for period in (Period.ALL, Period.DAY):
+                    await usage.record(self.uid, {Metric.LIVE_SECONDS: delta_seconds}, period=period)
             self.usage_seconds_recorded += delta_seconds
             self.pending_tokens = self.pending_input_tokens = self.pending_output_tokens = 0
 

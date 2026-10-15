@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core'
 import { FirebaseError } from 'firebase/app'
 import {
   createUserWithEmailAndPassword,
@@ -6,9 +7,11 @@ import {
   signOut,
 } from 'firebase/auth'
 import { type FormEvent, useCallback, useEffect, useState } from 'react'
+import { usePaywall } from '@/components/billing/Paywall'
 import { Button } from '@/components/ui/Button'
 import { IconClose, IconEye, IconEyeOff } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
+import { getBillingStatus, PLAN_NAMES, type BillingStatus } from '@/modules/billing/api'
 import { useAppStore } from '@/state/useAppStore'
 import { ApiError, api } from '../api/client'
 import { firebase, refreshVerification } from '../firebase'
@@ -31,11 +34,6 @@ interface Profile {
   consents: Consent[]
   consentVersion: string
   emailVerified: boolean
-}
-
-interface Usage {
-  limits: Record<string, number>
-  month: Record<string, number>
 }
 
 const CONSENT_COPY: Record<ConsentKind, { title: string; body: string }> = {
@@ -109,7 +107,9 @@ export function SignInForm() {
     }
   }
 
+  // Native sign-in: Google on Android and iPhone; Apple only on iPhone (it's Apple's service).
   const native = isNative()
+  const appleSignIn = Capacitor.getPlatform() === 'ios'
   const nativeSignIn = async (provider: () => Promise<void>) => {
     setBusy(true)
     setError(null)
@@ -126,14 +126,16 @@ export function SignInForm() {
     <>
     {native && (
       <div className="mt-4 flex flex-col gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void nativeSignIn(signInWithAppleNative)}
-          className="h-10 rounded-xl bg-white text-[13px] font-semibold text-black transition-opacity disabled:opacity-60"
-        >
-           Continue with Apple
-        </button>
+        {appleSignIn && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void nativeSignIn(signInWithAppleNative)}
+            className="h-10 rounded-xl bg-white text-[13px] font-semibold text-black transition-opacity disabled:opacity-60"
+          >
+             Continue with Apple
+          </button>
+        )}
         <Button variant="ghost" disabled={busy} onClick={() => void nativeSignIn(signInWithGoogleNative)}>
           Continue with Google
         </Button>
@@ -269,7 +271,9 @@ function SignedIn({
   onDeleted: () => void
 }) {
   const [profile, setProfile] = useState<Profile | null>(null)
-  const [usage, setUsage] = useState<Usage | null>(null)
+  const [billing, setBilling] = useState<BillingStatus | null>(null)
+  const showPlans = usePaywall((s) => s.show)
+  const paywallOpen = usePaywall((s) => s.open)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState<ConsentKind | null>(null)
   const [verificationSent, setVerificationSent] = useState(false)
@@ -278,9 +282,9 @@ function SignedIn({
 
   const load = useCallback(async () => {
     try {
-      const [p, u] = await Promise.all([api<Profile>('/me'), api<Usage>('/me/usage')])
+      const [p, b] = await Promise.all([api<Profile>('/me'), getBillingStatus()])
       setProfile(p)
-      setUsage(u)
+      setBilling(b)
       setError(null)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load your account. Check your connection.')
@@ -289,7 +293,7 @@ function SignedIn({
 
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, paywallOpen])
 
   const toggle = async (consent: Consent) => {
     if (!profile) return
@@ -307,8 +311,6 @@ function SignedIn({
     }
   }
 
-  const liveUsed = Math.floor((usage?.month.liveSeconds ?? 0) / 60)
-  const liveLimit = usage?.limits.live_minutes_month
 
   return (
     <div className="mt-4">
@@ -388,15 +390,27 @@ function SignedIn({
         {!profile && !error && <div className="text-[12px] text-faint">Loading…</div>}
       </div>
 
-      {liveLimit !== undefined && (
+      {billing && (
         <>
-          <div className="eyebrow mt-5">This month</div>
+          <div className="eyebrow mt-5">
+            {PLAN_NAMES[billing.plan]}
+            {billing.isTrial ? ' · one-time' : ' · this month'}
+          </div>
           <div className="mt-2 text-[12.5px] text-mist">
-            {liveUsed} of {liveLimit} live interview minutes used
+            {billing.minutesLeft} of {billing.allowanceMinutes} live minutes left
+            {billing.todayMinutesLeft !== null && ` · ${billing.todayMinutesLeft} left today`}
           </div>
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-jade-400" style={{ width: `${Math.min(100, (liveUsed / Math.max(1, liveLimit)) * 100)}%` }} />
+            <div
+              className="h-full rounded-full bg-jade-400"
+              style={{ width: `${Math.min(100, (billing.minutesLeft / Math.max(1, billing.allowanceMinutes)) * 100)}%` }}
+            />
           </div>
+          {billing.plan !== 'internal' && (
+            <button type="button" onClick={() => showPlans('upgrade')} className="mt-2 text-[12px] font-medium text-jade-400 hover:underline">
+              {billing.plan === 'free' ? 'See plans · Have a code?' : 'Change plan · Have a code?'}
+            </button>
+          )}
         </>
       )}
 

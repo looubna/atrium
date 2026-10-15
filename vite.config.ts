@@ -7,6 +7,8 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 const SOFFICE = ['/Applications/LibreOffice.app/Contents/MacOS/soffice', '/usr/bin/soffice', '/usr/local/bin/soffice'].find(existsSync)
 const MAX_BYTES = 80 * 1024 * 1024
 
@@ -96,7 +98,7 @@ const deckConverter = (): Plugin => ({
 const apiProxy = { '/api/v1': { target: 'http://127.0.0.1:8000', ws: true } }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), deckConverter(), mediapipeRuntime()],
+  plugins: [react(), tailwindcss(), deckConverter(), mediapipeRuntime(), cloudflare()],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },

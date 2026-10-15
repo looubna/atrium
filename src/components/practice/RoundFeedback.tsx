@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { formatMetric, type PracticeMetric, type RoundResult } from '@/modules/practice/api'
 import { IconCheck, IconChevronRight, IconFlame, IconMedal, IconTarget } from '../ui/Icon'
+import { StoryArcChart } from './StoryArcChart'
+import { StoryModel } from './StoryModel'
 
 /**
  * A round, played back visually: how it went at a glance, each result on a gauge
@@ -38,6 +40,8 @@ export function RoundFeedback({ result }: { result: RoundResult }) {
         </section>
       )}
 
+      {result.arc && <StoryArcChart arc={result.arc} />}
+
       {result.timeline?.length > 0 && <SpeechTimeline result={result} />}
 
       {feedback && (feedback.strengths.length > 0 || feedback.improvements.length > 0) && (
@@ -46,6 +50,8 @@ export function RoundFeedback({ result }: { result: RoundResult }) {
           <CoachCard title="Change next time" tone="work" points={feedback.improvements} delay={430} />
         </div>
       )}
+      {feedback?.model && <StoryModel model={feedback.model} attemptId={result.attemptId} />}
+
       {!feedback && result.transcript && (
         <Callout tone="ok">Coaching notes aren’t available right now — your measured results are above.</Callout>
       )}

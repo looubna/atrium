@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { examinerFor } from '@/data/examiners'
 import { ROOM_PHOTO, type Orientation } from '@/data/inPersonMedia'
 import type { SessionSetup } from '@/data/practice'
@@ -12,8 +12,8 @@ import { useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
 import { IconVideo, IconVideoOff } from '../ui/Icon'
 import { AvatarTile } from './AvatarTile'
-import { FramingHint } from './FramingHint'
 import { LeaveArrow, LiveOverlay, SceneCaption } from './LivePanels'
+import { CameraCheck } from './CameraCheck'
 
 /**
  * The oral exam itself, in the room the exam is actually held in.
@@ -165,7 +165,10 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
         </button>
       )}
 
-      {cameraOn && camera.stream && <SelfView stream={camera.stream} />}
+      {/* In person: your own camera only until you are in frame and talking. */}
+      {cameraOn && camera.stream && (
+        <CameraCheck stream={camera.stream} framing={room.framingStatus} standing={false} micLevel={live.state.micLevel} />
+      )}
 
       {/* Sitting down: the one way in, with the camera choice still open. */}
       {(phase === 'idle' || phase === 'starting') && (
@@ -187,7 +190,6 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
         </div>
       )}
 
-      <FramingHint framing={room.framing} />
 
       <LiveOverlay
         live={live}
@@ -207,22 +209,6 @@ export function ExamRoom({ session, sessionId }: { session: SessionSetup; sessio
           />
         }
       />
-    </div>
-  )
-}
-
-/** The student's own camera, small and out of the way, mirrored like a selfie view. */
-function SelfView({ stream }: { stream: MediaStream }) {
-  const video = useRef<HTMLVideoElement>(null)
-  useEffect(() => {
-    const element = video.current
-    if (!element) return
-    element.srcObject = stream
-    element.play().catch(() => {})
-  }, [stream])
-  return (
-    <div className="absolute bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-4 z-10 h-24 w-[4.5rem] overflow-hidden rounded-xl bg-black ring-1 ring-white/15 sm:h-28 sm:w-20">
-      <video ref={video} autoPlay muted playsInline className="size-full -scale-x-100 object-cover" />
     </div>
   )
 }

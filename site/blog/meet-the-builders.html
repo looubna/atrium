@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atrium: built with Google AI</title>
+<meta name="description" content="How I built Atrium, a 3D city where people across Asia-Pacific practise high-stakes conversations out loud with live AI people, using Gemini Live, Vertex AI, Veo and Cloud Run GPUs.">
+<meta property="og:title" content="Building Atrium with Google AI">
+<meta property="og:description" content="A 3D city where you practise interviews, presentations and everyday conversations out loud, with live AI people and feedback.">
+<meta property="og:image" content="https://atriumcoach.com/img/03_panel_interview.jpg">
+<meta name="theme-color" content="#07090c">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .post { max-width: 760px; margin: 0 auto; padding: 48px 20px 72px; }
+  .post h1 { font-size: clamp(32px, 4.6vw, 46px); margin-bottom: 10px; }
+  .post .meta { color: var(--muted); font-size: 15px; margin-bottom: 30px; }
+  .post h2 { font-size: 26px; margin: 42px 0 10px; }
+  .post p, .post li { color: #c9d1d6; font-size: 17px; line-height: 1.7; }
+  .post li { margin-bottom: 6px; }
+  .post strong { color: var(--text); }
+  .post figure { margin: 28px 0; }
+  .post figure img { border-radius: 14px; width: 100%; }
+  .post figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; text-align: center; }
+  .post table { width: 100%; border-collapse: collapse; font-size: 15px; margin: 14px 0; }
+  .post th, .post td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .post th { color: var(--text); }
+  .post td { color: #c9d1d6; }
+  .post .callout { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin: 24px 0; }
+  .post code { background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 6px; font-size: 15px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/favicon.svg" alt="">Atrium</a>
+    <nav class="nav"><a href="/">Home</a><a href="https://app.atriumcoach.com">Open in browser</a><a class="cta" href="/download">Get the app</a></nav>
+  </div>
+</header>
+
+<main class="post">
+  <h1>Atrium: the place to practise before the moment matters</h1>
+  <p class="meta">Loubna Enakhli, Founder of Atrium · Seoul, South Korea · Built with Gemini Live, the Agent Development Kit, Vertex AI, Veo and Google Cloud</p>
+
+  <figure>
+    <div style="position: relative; padding-top: 56.25%; border-radius: 14px; overflow: hidden; background: #000">
+      <iframe src="https://www.youtube-nocookie.com/embed/8eDEuDpX64I" title="Atrium demo (2 minutes)" style="position: absolute; inset: 0; width: 100%; height: 100%; border: 0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+    </div>
+    <figcaption>Atrium in 2 minutes · <a href="https://www.youtube.com/watch?v=8eDEuDpX64I">watch on YouTube</a></figcaption>
+  </figure>
+
+  <h2>The problem I wanted to solve</h2>
+  <p>I've always believed that intelligence, talent, and hard work should open doors. Throughout my own life, though, I realized that this isn't always how the world works.</p>
+  <p>I've felt that I missed opportunities because of my language skills, because I couldn't put my ideas into words, or simply because I didn't know how to stand out when communication mattered. And I kept asking myself: how many talented, intelligent people are experiencing the same thing?</p>
+  <p>Here in Asia-Pacific, the answer is: millions. Students, graduates and professionals across the region compete for jobs, scholarships and investment in conversations that decide their future, very often in a language that isn't their first. A job interview in English at a multinational, a thesis defence, a scholarship interview, a pitch to investors, small talk with new colleagues in a new country.</p>
+  <p>School teaches us mathematics, science, and engineering. It rarely teaches us how to speak with confidence, handle a difficult conversation, sell an idea, or make a lasting impression. Private coaching is expensive and concentrated in a few big cities, friends make kind but short mock interviewers, and text chatbots don't train you to <em>speak</em>. So the person who gets the opportunity isn't always the most knowledgeable one. It's the one who knows how to communicate their value.</p>
+  <p>I don't believe people should have to become naturally extroverted to succeed. Communication is a skill, and like any skill, it can be learned, practised, and improved. That's why I created Atrium.</p>
+
+  <h2>What Atrium does</h2>
+  <p>I didn't want another chatbot that gives advice. I wanted a place where people actually live the situation, make mistakes, get feedback, and try again.</p>
+  <p><strong>Atrium is a 3D city where every building is a situation you can practise in.</strong> Inside, you don't type into a text box: you speak out loud, in real time, to people who answer with their own voice and a lip-synced face.</p>
+
+  <figure>
+    <img src="/img/p01_city.png" alt="The Atrium city" style="max-width: 320px; margin: 0 auto; display: block;">
+    <figcaption>The city: Company, University, Park, Café, Bus Stop, Brain Lab, Language Center and Practice Center.</figcaption>
+  </figure>
+
+  <ul>
+    <li><strong>The Company.</strong> You upload your CV and the job description. AI agents research the company, its website and interview insights online, then build the likely interview process round by round. You take the interview one-on-one or with a panel, online as a video call or in person, from the front door and the reception to the meeting room. The Company also has rooms for technical and coding interviews, sales pitches and investor meetings, negotiations, team meetings, leading a team call, presentations, and networking.</li>
+    <li><strong>The University.</strong> Academic presentations, a thesis defence in front of a committee, oral exams on a shared board, debates, and scholarship or admission interviews prepared from the programme's requirements and your own application.</li>
+    <li><strong>Practice Center.</strong> Short exercises that turn feedback into progress: communication frameworks, articulation, filler words, structure. Personal bests, challenges and a daily streak keep you consistent.</li>
+    <li><strong>Everyday life: the Park, the Café, the Bus Stop.</strong> Small talk, introducing yourself, saying no, disagreeing politely, emotional conversations with a friend, and a research-based storytelling course.</li>
+    <li><strong>Brain Lab.</strong> An AI neuroscientist that discusses stress, focus or confidence, grounded in published research with named sources, ending with a personal plan.</li>
+    <li><strong>Language Center.</strong> Live conversations in 14 languages, with support in your native language, so you speak from day one.</li>
+  </ul>
+
+  <p>After every session, Atrium gives detailed, actionable feedback. It points to the exact moments where an answer, its structure or its delivery could be stronger, including body language (eye contact, posture, gestures) when the camera is on. One tap on a suggestion opens the matching exercise in the Practice Center.</p>
+
+  <figure>
+    <img src="/img/rooms/oral-exam-board.jpg" alt="An oral exam with an examiner and a shared board">
+    <figcaption>An oral exam: the examiner reads the board as you work each problem and asks you to explain your steps.</figcaption>
+  </figure>
+
+  <h2>How I built it with Google AI</h2>
+  <p>Atrium is a system of specialised agents, each with one clear job:</p>
+  <ul>
+    <li><strong>Research and preparation agents</strong> (Gemini on Vertex AI) read the user's documents, search the web, and build each situation: the interview rounds, the committee, the meeting brief.</li>
+    <li><strong>Live conversation agents</strong> (<strong>Gemini Live, native audio</strong>, through Google's <strong>Agent Development Kit</strong>) hold the real-time voice conversation. Each room has its own cast and its own rules: one person or a whole panel, who may speak, and when.</li>
+    <li><strong>Evaluation agents</strong> (Gemini) transcribe the session, score it against a competency catalogue, and write the feedback, with timestamps that link back to the recording.</li>
+  </ul>
+  <table>
+    <tr><th>Layer</th><th>What runs it</th></tr>
+    <tr><td>Conversation</td><td>Gemini Live via the Agent Development Kit on Vertex AI</td></tr>
+    <tr><td>Research &amp; feedback</td><td>Gemini on Vertex AI, with a fallback model when shared capacity is busy</td></tr>
+    <tr><td>Rooms &amp; people</td><td>Filmed with <strong>Veo</strong></td></tr>
+    <tr><td>Lip-synced faces</td><td>A MuseTalk face server on <strong>Cloud Run with NVIDIA L4 GPUs</strong>, in two regions, scaling to zero; video over WebRTC with a TURN relay</td></tr>
+    <tr><td>Backend</td><td>Python and FastAPI on Cloud Run, Firestore, Cloud Tasks, Cloud Storage, Firebase Authentication</td></tr>
+    <tr><td>App</td><td>React and Three.js for the 3D city, Capacitor for Android; also on the web</td></tr>
+  </table>
+
+  <h2>Challenges</h2>
+  <p><strong>Cost.</strong> I wanted live voice, lip-synced faces, research and detailed feedback without infrastructure that burns money while idle. For any session I watch the cost per minute of conversation:</p>
+  <div class="callout"><p style="margin: 0; text-align: center"><code>cost per minute = c<sub>voice</sub> + c<sub>GPU</sub> / (60 · n) + c<sub>feedback</sub> / T</code></p></div>
+  <p>where c<sub>voice</sub> is the real-time voice cost per minute, c<sub>GPU</sub> the GPU price per hour shared by n simultaneous conversations, and c<sub>feedback</sub> the one-off cost of analysing a session of T minutes. An L4 GPU renders about 29 frames per second, just above the 25 a smooth face needs, which leaves room for exactly one conversation per GPU. That shaped the whole design: one conversation per GPU instance, a loading screen rather than a frozen face, and GPUs that run only while someone is talking.</p>
+  <p><strong>GPUs that aren't always there.</strong> I first ran the faces on GPU virtual machines started on demand, until a night when no L4 was free in either zone. Moving the face server to Cloud Run GPUs, scaling to zero and spread over two regions, solved availability without paying for idle machines.</p>
+  <p><strong>Natural turn-taking.</strong> A voice AI decides you've finished speaking after a silence. Too short, and it interrupts you mid-thought; too long, and every reply feels like a hang. I tuned that silence per room, from 1.2 seconds for quick small talk to 2.2 seconds for a formal debate, and added safeguards: no double questions, no talking over the user, and no surprise endings before the time the user chose.</p>
+  <p><strong>One product, not ten tools.</strong> Making every environment feel like part of the same city meant one shared live-conversation engine, one feedback format, and one way into practice.</p>
+
+  <h2>What I learned</h2>
+  <ul>
+    <li><strong>A good AI product is a workflow, not a model.</strong> The quality came from giving each agent a clear responsibility and connecting them well.</li>
+    <li><strong>Real-time is a different world.</strong> When to answer, when to stay silent, how far the face lags behind the voice: small timing details matter more to users than raw intelligence.</li>
+    <li><strong>Measure, then decide.</strong> Logging reply latency, frame rates and cost per minute turned arguments into numbers, and numbers into decisions.</li>
+  </ul>
+
+  <h2>What's next</h2>
+  <p>Today every room except the Language Center runs in English. Next, I want people across Asia-Pacific to practise in their own language and in the languages of the jobs and schools they're aiming for: a job interview in Japanese, a pitch in Bahasa, a thesis defence in Korean. The people you talk to, the feedback and the exercises will all follow the language you choose, because the opportunities people miss aren't only in English.</p>
+  <p>I want to help people stop missing opportunities simply because they haven't yet mastered the art of communicating their potential. Being intelligent should never be a disadvantage just because you're not the loudest person in the room.</p>
+
+  <div class="callout">
+    <p style="margin: 0 0 10px"><strong>Try Atrium</strong></p>
+    <p style="margin: 0">In your browser: <a href="https://app.atriumcoach.com">app.atriumcoach.com</a> · Android: <a href="/download">atriumcoach.com/download</a> · Website: <a href="/">atriumcoach.com</a></p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Atrium</span>
+    <nav><a href="/privacy">Privacy &amp; terms</a><a href="mailto:hello@atriumcoach.com">hello@atriumcoach.com</a></nav>
+  </div>
+</footer>
+</body>
+</html>

@@ -11,6 +11,7 @@ import { useInterviewRoom } from '@/modules/interview/live/useInterviewRoom'
 import type { AvatarRenderer } from '@/platform/avatar/types'
 import { AvatarTile } from './AvatarTile'
 import { FramingHint } from './FramingHint'
+import { RotateHint } from './RotateHint'
 import { useAppStore } from '@/state/useAppStore'
 import { LiveOverlay, LiveStrip } from './LivePanels'
 import { SlideControls } from './SlideControls'
@@ -411,7 +412,8 @@ export function VirtualCall() {
   const timer = useCountdown((mine?.minutes ?? 0) * 60)
 
   const [muted, setMuted] = useState(false)
-  const [cameraOn, setCameraOn] = useState(false)
+  // On from the start, as on a real video call: the user sees their own tile all call long.
+  const [cameraOn, setCameraOn] = useState(true)
   const inCall = view === 'call'
   // A live AI interview: the interviewer actually listens and speaks.
   const liveSessionId = inCall ? (mine?.interview?.sessionId ?? null) : null
@@ -525,6 +527,8 @@ export function VirtualCall() {
 
   return (
     <div className="anim-fade absolute inset-0 z-[45] flex flex-col bg-[#070b14] hud-inset">
+      {/* Several people on the call: sideways their tiles are bigger. */}
+      {guests.length > 1 && <RotateHint who="everyone on the call" />}
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className={cn('min-w-0 flex-1', wideShare && 'flex items-center gap-3')}>

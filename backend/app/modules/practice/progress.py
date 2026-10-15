@@ -22,6 +22,7 @@ from app.modules.practice.catalog import (
     SKILLS,
     DrillDef,
     challenge_for,
+    is_story,
 )
 
 XP_ROUND = 10
@@ -64,8 +65,9 @@ def level_for(xp: int) -> tuple[int, int, int]:
 
 
 def today_drill(uid: str, day: str) -> DrillDef:
-    """The day's suggested challenge: stable for the day, different across users."""
-    ids = sorted(DRILLS)
+    """The day's suggested challenge: stable for the day, different across users. Only Practice Center
+    drills: the Story Course lives in the Park and is taken in order."""
+    ids = sorted(d for d in DRILLS if not is_story(d))
     digest = hashlib.sha256(f"{uid}:{day}".encode()).digest()
     return DRILLS[ids[int.from_bytes(digest[:4], "big") % len(ids)]]
 
@@ -129,6 +131,7 @@ def apply_round(
     speech_ms: int,
     day: str,
     uid: str,
+    prompt: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Awards]:
     doc = migrate(copy.deepcopy(doc) if doc else {})
     doc.setdefault("xp", 0)
@@ -142,6 +145,9 @@ def apply_round(
     awards = Awards(counted=speech_ms >= drill.min_speech_ms)
     if not awards.counted:
         return doc, awards
+
+    if is_story(drill.id):
+        _story_telling(doc, drill, values, prompt or {}, day)
 
     state["rounds"] = state.get("rounds", 0) + 1
     daily["rounds"] = daily.get("rounds", 0) + 1
@@ -218,6 +224,7 @@ def apply_round(
         "think-under-pressure": 3 in _completed(doc, "think-on-your-feet"),
         "master-of-the-pause": 3 in _completed(doc, "pause-dont-fill"),
         "clear-speaker": 3 in _completed(doc, "clear-diction") and 2 in _completed(doc, "explain-it-simply"),
+        "master-storyteller": 3 in _completed(doc, "story-signature"),
         "structured-mind": 2 in _completed(doc, "framework-challenge")
         and counters.get("structured", 0) >= STRUCTURED_ROUNDS
         and len(counters.get("structuredDrills", [])) >= STRUCTURED_DRILLS,
@@ -229,6 +236,21 @@ def apply_round(
 
     doc["xp"] = int(doc["xp"]) + awards.xp
     return doc, awards
+
+
+def _story_telling(doc: dict[str, Any], drill: DrillDef, values: dict[str, float | None], prompt: dict[str, Any],
+                   day: str) -> None:
+    """Tell It Again scores a retelling against the story it retells; every other story round becomes the one
+    to retell next. `values` gains `improvement` (points on the 1-5 overall rating) on a retelling."""
+    last = doc.get("story") or {}
+    score = values.get("story")
+    if drill.id == "story-retell":
+        previous = last.get("score")
+        values["improvement"] = None if score is None or previous is None else round(score - float(previous), 1)
+        return
+    seed = prompt.get("seed")
+    if score is not None and isinstance(seed, str) and seed.strip():
+        doc["story"] = {"seed": seed.strip()[:300], "score": score, "drillId": drill.id, "day": day}
 
 
 def overview(doc: dict[str, Any] | None, uid: str, day: str) -> dict[str, Any]:
@@ -310,4 +332,6 @@ def overview(doc: dict[str, Any] | None, uid: str, day: str) -> dict[str, Any]:
             for s, label in SKILLS.items()
         ],
         "drills": drills,
+        # The Story Course: the last story told, which Tell It Again retells.
+        "story": {"lastSeed": (doc.get("story") or {}).get("seed"), "lastScore": (doc.get("story") or {}).get("score")},
     }

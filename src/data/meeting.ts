@@ -1,3 +1,4 @@
+import { VIDEO_BASE } from '@/platform/media/videoBase'
 /**
  * The small-room presentation, seen from the presenter's seat as footage rather
  * than as the 3D room: a still image and short video loops dropped into
@@ -12,17 +13,17 @@ export const MEETING_ATTENDEE_IDS = [900, 901, 902] as const
  */
 export const AUDIENCE_ATTENDEE_IDS = [910, 911, 912, 913, 914, 915] as const
 
-export const MEETING_MEDIA_BASE = '/video/meeting'
+export const MEETING_MEDIA_BASE = `${VIDEO_BASE}/meeting`
 /** The auditorium from the lectern, same layout: `<orientation>/poster.jpg` plus clips. */
-export const THEATER_MEDIA_BASE = '/video/theater'
+export const THEATER_MEDIA_BASE = `${VIDEO_BASE}/theater`
 /** The university lecture hall, from the lectern of a thesis defence. */
-export const DEFENSE_MEDIA_BASE = '/video/defense'
+export const DEFENSE_MEDIA_BASE = `${VIDEO_BASE}/defense`
 /** A one-to-one interview in person: the interviewer across the table. */
-export const INTERVIEW_MEDIA_BASE = '/video/interview'
+export const INTERVIEW_MEDIA_BASE = `${VIDEO_BASE}/interview`
 /** An academic presentation: a university classroom of students, from the lectern laptop. */
-export const ACADEMIC_MEDIA_BASE = '/video/academic'
+export const ACADEMIC_MEDIA_BASE = `${VIDEO_BASE}/academic`
 /** A debate: the opposition team at their table and an audience, from the speaker's lectern. */
-export const DEBATE_MEDIA_BASE = '/video/debate'
+export const DEBATE_MEDIA_BASE = `${VIDEO_BASE}/debate`
 
 /** Sessions (by format id) with a room of their own, used in place of the location's stage. */
 export const FORMAT_MEDIA: Record<string, string> = {

@@ -1,13 +1,14 @@
 import type { NetworkingTag } from './practice'
+import { VIDEO_BASE } from '@/platform/media/videoBase'
 
 /**
  * The networking reception: a hall of guests, some wearing a floating name tag.
  * Tapping a tag joins that person's conversation, face to face.
  */
 
-export const NETWORKING_MEDIA_BASE = '/video/networking'
+export const NETWORKING_MEDIA_BASE = `${VIDEO_BASE}/networking`
 /** Each guest face to face, `<id>_land` and `<id>_port` (.mp4 loop, .jpg first frame). */
-export const NETWORKING_CLOSEUP_BASE = '/video/networking/close'
+export const NETWORKING_CLOSEUP_BASE = `${VIDEO_BASE}/networking/close`
 /**
  * Guests filmed for a live, lip-synced face: on their own and close, facing the user, listening with
  * a closed mouth, the people behind them standing still (`<id>_face.mp4` / `.jpg`, one landscape clip

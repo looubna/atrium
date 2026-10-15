@@ -231,7 +231,8 @@ def test_in_person_interviews_happen_at_the_table() -> None:
     assert "across the table" in solo and "thanking them for coming in" in solo
     assert "name plate" in solo and "video call" not in solo
     assert "walk them out" in solo and "ask your first question" in solo
-    assert "At the table with you" in panel and "cameras on" not in panel and "Your colleagues say hello next" in panel and "ask no question yet" in panel
+    assert "At the table with you" in panel and "cameras on" not in panel
+    assert "Your colleagues say hello next" in panel and "ask no question yet" in panel
     assert "cameras on" in online and "across the table" not in online and "video call" in online
 
 

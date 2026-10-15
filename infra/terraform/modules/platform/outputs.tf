@@ -51,3 +51,4 @@ output "firebase_web_config" {
     appId             = google_firebase_web_app.web.app_id
   }
 }
+

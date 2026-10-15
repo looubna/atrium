@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 
 from app.platform.auth.dependencies import AuthUser
 from app.platform.faces import face_server
+from app.platform.faces.ice import ice_servers
 from app.platform.ratelimit import rate_limit
 
 router = APIRouter(prefix="/faces", tags=["faces"])
@@ -23,3 +24,11 @@ async def warm(
     _user: Annotated[AuthUser, Depends(rate_limit("faces_warm", limit=900, window_seconds=3600))],
 ) -> dict[str, Any]:
     return (await face_server().warm()).public()
+
+
+@router.get("/ice")
+async def ice(
+    _user: Annotated[AuthUser, Depends(rate_limit("faces_ice", limit=300, window_seconds=3600))],
+) -> dict[str, Any]:
+    """Where the face video can travel: STUN for the direct route, and the TURN relay when configured."""
+    return {"iceServers": await ice_servers()}

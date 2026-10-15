@@ -44,6 +44,14 @@ export interface AvatarRenderer {
   isVoicing?(): boolean
 
   /**
+   * Opt-in, per room: hold the face's picture and voice this much longer in the browser before
+   * playing them, so packets lost on a long network path can be resent in time instead of freezing
+   * the picture while the voice plays on. Both are held together, so lips and voice stay in step.
+   * Rooms that never call it keep the browser's default.
+   */
+  setPlayoutBuffer?(ms: number): void
+
+  /**
    * How far the face lags the audio, in milliseconds, for a provider that does not
    * speak for itself. Playback is delayed by this much so lips and sound line up.
    */

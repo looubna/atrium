@@ -86,6 +86,8 @@ FACES: dict[Format, str] = {
     Format.SMALL_ROOM: "sp_investors",
     Format.VIRTUAL: "sl_investors",
     Format.ACADEMIC: "academic_strip",
+    #: The lecture hall's committee table (`infra/livetalking/recordings/defense/make_strip.sh`).
+    Format.DEFENCE: "defense_strip",
     # At twice the size (`make_strip2x.sh`): the front-row faces are small, and the mouth keeps its detail.
     Format.LARGE_AUDIENCE: "theater_strip2x",
 }

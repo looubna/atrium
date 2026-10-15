@@ -27,6 +27,7 @@ SKILLS: dict[str, str] = {
     "voice": "Voice",
     "presence": "Presence",
     "conciseness": "Conciseness",
+    "storytelling": "Storytelling",
 }
 
 
@@ -68,6 +69,8 @@ class DrillDef:
     rubric: str = ""
     #: Speech needed for a round to count toward bests, challenges and the streak.
     min_speech_ms: int = 20_000
+    #: The coach also copies the story's hook and reveal lines, which are then timed (story.py).
+    quotes: bool = False
 
 
 def _get(values: Values, key: str) -> float | None:
@@ -110,6 +113,22 @@ DETAIL = MetricDef("detail", "Vivid detail", "/5", "higher", "ai", scale=(0, 5),
 FACTS = MetricDef("factsRecalled", "Facts recalled", "%", "higher", "ai", goal=70)
 STEPS = MetricDef("stepsCovered", "Framework steps covered", "%", "higher", "ai", goal=100)
 BOTH = MetricDef("bothSides", "Both sides argued", "", "higher", "ai", scale=(0, 1), goal=1)
+# The Story Course (Park → Storytelling): counted from the words (story.py) or rated by the coach.
+NARRATIVE_INDEX = MetricDef("narrativeIndex", "Narrative Index (buts per and)", "", "higher", scale=(0, 60), goal=20)
+STAGING_EARLY = MetricDef("stagingEarly", "Scene set up front", "x", "higher", scale=(0, 2), goal=1.2)
+HOOK_SECONDS = MetricDef("hookSeconds", "Question opened at", "s", "lower", scale=(0, 30), goal=10)
+REVEAL_AT = MetricDef("revealAt", "Answer revealed at", "%", "higher", goal=70)
+TENSION_PEAK = MetricDef("tensionPeakAt", "Tension peaks at", "%", "higher", goal=60)
+PAUSE_REVEAL = MetricDef("pauseBeforeReveal", "Pause before the reveal", "s", "higher", scale=(0, 3), goal=0.8)
+IMPROVEMENT = MetricDef("improvement", "Better than last telling", "pts", "higher", scale=(-2, 2), goal=0.5)
+SPINE = MetricDef("spine", "Story spine", "/5", "higher", "ai", scale=(0, 5), goal=4)
+ORIENTATION = MetricDef("orientation", "Scene and character", "/5", "higher", "ai", scale=(0, 5), goal=4)
+HOOK = MetricDef("hook", "Curiosity hook", "/5", "higher", "ai", scale=(0, 5), goal=4)
+TENSION = MetricDef("tension", "Rising tension", "/5", "higher", "ai", scale=(0, 5), goal=4)
+MEANING = MetricDef("meaning", "Meaning", "/5", "higher", "ai", scale=(0, 5), goal=4)
+DIALOGUE = MetricDef("dialogue", "Dialogue used", "", "higher", "ai", scale=(0, 1), goal=1)
+CALLBACK = MetricDef("callback", "Ending calls back", "", "higher", "ai", scale=(0, 1), goal=1)
+STORY = MetricDef("story", "Story overall", "/5", "higher", "ai", scale=(0, 5), goal=4)
 
 #: What the AI coach may rate, with the question it answers.
 AI_RATINGS: dict[str, str] = {
@@ -120,6 +139,16 @@ AI_RATINGS: dict[str, str] = {
     "factsRecalled": "0-100: share of the passage's key facts (who, what, where, when, why, outcome) retold correctly",
     "stepsCovered": "0-100: share of the framework's steps the answer clearly covered, in order",
     "bothSides": "0 or 1: did the speaker argue both for and against, each with a real argument?",
+    "spine": "1-5: does the story move on And-But-Therefore (a situation, BUT a problem, THEREFORE what happened), "
+    "not And-And-And?",
+    "orientation": "1-5: in the first seconds, do we know who, where, when, and what the main character wants?",
+    "hook": "1-5: does it open a question or mystery early that makes the listener need to know how it ends?",
+    "tension": "1-5: does an obstacle escalate, with stakes rising towards a climax, rather than events of "
+    "equal weight?",
+    "meaning": "1-5: after the resolution, does the speaker say what it meant (what changed, what they learned)?",
+    "dialogue": "0 or 1: does the story include at least one line of what someone said, in their words?",
+    "callback": "0 or 1: does the ending return to the opening (its image, question or words)?",
+    "story": "1-5: overall, would a listener want to hear this story to the end and remember it tomorrow?",
 }
 
 
@@ -574,6 +603,192 @@ DRILLS: dict[str, DrillDef] = {
     ]
 }
 
+
+
+def _story(
+    id_: str,
+    title: str,
+    metrics: tuple[MetricDef, ...],
+    bests: tuple[str, ...],
+    challenges: tuple[Challenge, ...],
+    ratings: tuple[str, ...],
+    rubric: str,
+    *,
+    quotes: bool = False,
+    min_speech_ms: int = 30_000,
+) -> DrillDef:
+    # Every story round also gets an overall rating: it is what "Tell It Again" improves on.
+    return DrillDef(
+        id_, title, ("storytelling",), metrics, bests, challenges, (*ratings, "story"), rubric, min_speech_ms, quotes
+    )
+
+
+#: The Story Course, in order: each step trains one evidence-based technique (lessons in src/data/drills.ts).
+STORY_COURSE: tuple[DrillDef, ...] = (
+    _story(
+        "story-spine",
+        "The Spine: And, But, Therefore",
+        (NARRATIVE_INDEX, SPINE, SPEAKING, FILLERS),
+        ("narrativeIndex", "spine"),
+        (
+            ch(1, "Spine 4/5+, Narrative Index 15+", spine=(4, None), narrativeIndex=(15, None)),
+            ch(2, "Spine 4/5+, Narrative Index 20+, at most 2 fillers · 2 rounds in a row", 2,
+               spine=(4, None), narrativeIndex=(20, None), fillers=(None, 2)),
+            ch(3, "Spine 5/5, Narrative Index 25+, at most 1 filler · 3 rounds in a row", 3,
+               spine=(5, None), narrativeIndex=(25, None), fillers=(None, 1)),
+        ),
+        ("spine",),
+        "The whole story in about 30 seconds on Randy Olson's And-But-Therefore: a situation AND its context, BUT a "
+        "problem or turn, THEREFORE what happened because of it. Not a list of events joined by 'and'.",
+        min_speech_ms=20_000,
+    ),
+    _story(
+        "story-orientation",
+        "Set the Scene",
+        (ORIENTATION, STAGING_EARLY, DETAIL, FILLERS),
+        ("orientation", "stagingEarly"),
+        (
+            ch(1, "Scene and character 4/5+, scene set up front 1.1x+",
+               orientation=(4, None), stagingEarly=(1.1, None)),
+            ch(2, "Scene and character 4/5+, 1.2x+, vivid detail 4/5+ · 2 rounds in a row", 2,
+               orientation=(4, None), stagingEarly=(1.2, None), detail=(4, None)),
+            ch(3, "Scene and character 5/5, 1.3x+, at most 1 filler · 3 rounds in a row", 3,
+               orientation=(5, None), stagingEarly=(1.3, None), fillers=(None, 1)),
+        ),
+        ("orientation", "detail"),
+        "Labov's orientation: within the first 15 seconds the listener knows who, where and when, and what the main "
+        "character wants, so they have someone to care about before anything happens.",
+    ),
+    _story(
+        "story-curiosity",
+        "The Curiosity Gap",
+        (HOOK, HOOK_SECONDS, REVEAL_AT, FILLERS),
+        ("hook", "hookSeconds"),
+        (
+            ch(1, "Hook 4/5+, question opened within 10 s, answered after 60% of the story",
+               hook=(4, None), hookSeconds=(None, 10), revealAt=(60, None)),
+            ch(2, "Hook 4/5+, within 8 s, answered after 70% · 2 rounds in a row", 2,
+               hook=(4, None), hookSeconds=(None, 8), revealAt=(70, None)),
+            ch(3, "Hook 5/5, within 6 s, answered after 75%, at most 1 filler · 3 rounds in a row", 3,
+               hook=(5, None), hookSeconds=(None, 6), revealAt=(75, None), fillers=(None, 1)),
+        ),
+        ("hook",),
+        "An information gap (Loewenstein): open a question in the first seconds that the listener needs answered, "
+        "and hold the answer back until late in the story, so curiosity keeps them listening.",
+        quotes=True,
+    ),
+    _story(
+        "story-tension",
+        "Rising Tension",
+        (TENSION, TENSION_PEAK, STRUCTURE, FILLERS),
+        ("tension",),
+        (
+            ch(1, "Rising tension 4/5+, tension peaking in the second half",
+               tension=(4, None), tensionPeakAt=(50, None)),
+            ch(2, "Rising tension 4/5+, peak at 70%+, structure 4/5+ · 2 rounds in a row", 2,
+               tension=(4, None), tensionPeakAt=(70, None), structure=(4, None)),
+            ch(3, "Rising tension 5/5, peak at 70%+, at most 1 filler · 3 rounds in a row", 3,
+               tension=(5, None), tensionPeakAt=(70, None), fillers=(None, 1)),
+        ),
+        ("tension", "structure"),
+        "Freytag's dramatic arc: a clear obstacle, then complications that raise the stakes step by step to a "
+        "climax, not events of equal weight. Rising tension is what holds attention before the resolution.",
+    ),
+    _story(
+        "story-vivid",
+        "Make It Vivid",
+        (DETAIL, DIALOGUE, STRUCTURE, FILLERS),
+        ("detail",),
+        (
+            ch(1, "Vivid detail 4/5+ and one line of dialogue", detail=(4, None), dialogue=(1, None)),
+            ch(2, "Detail 4/5+, dialogue, at most 2 fillers · 2 rounds in a row", 2,
+               detail=(4, None), dialogue=(1, None), fillers=(None, 2)),
+            ch(3, "Detail 5/5, dialogue, structure 4/5+ · 3 rounds in a row", 3,
+               detail=(5, None), dialogue=(1, None), structure=(4, None)),
+        ),
+        ("detail", "dialogue", "structure"),
+        "Narrative transportation (Green & Brock): concrete names, numbers, sounds, smells and at least one line of "
+        "real dialogue, so the listener sees the scene instead of hearing a summary.",
+    ),
+    _story(
+        "story-meaning",
+        "Resolution and Meaning",
+        (MEANING, CALLBACK, STRUCTURE, FILLERS),
+        ("meaning",),
+        (
+            ch(1, "Meaning 4/5+, ending calls back to the opening", meaning=(4, None), callback=(1, None)),
+            ch(2, "Meaning 4/5+, callback, structure 4/5+ · 2 rounds in a row", 2,
+               meaning=(4, None), callback=(1, None), structure=(4, None)),
+            ch(3, "Meaning 5/5, callback, at most 1 filler · 3 rounds in a row", 3,
+               meaning=(5, None), callback=(1, None), fillers=(None, 1)),
+        ),
+        ("meaning", "callback", "structure"),
+        "Labov's evaluation and coda: after how it ended, say in one sentence what it meant (what changed, what you "
+        "learned), and close by returning to the opening image or question.",
+        quotes=True,
+    ),
+    _story(
+        "story-delivery",
+        "Deliver the Reveal",
+        (PAUSE_REVEAL, PACE_GAP, PITCH, FILLERS),
+        ("pauseBeforeReveal", "fillers"),
+        (
+            ch(1, "A pause of 0.6 s+ before the reveal, at most 3 fillers, pace within 25 wpm of 130-160",
+               pauseBeforeReveal=(0.6, None), fillers=(None, 3), paceGap=(None, 25)),
+            ch(2, "Pause 0.8 s+, at most 2 fillers, within 15 wpm, pitch movement 2.5+ · 2 rounds in a row", 2,
+               pauseBeforeReveal=(0.8, None), fillers=(None, 2), paceGap=(None, 15), pitchSemitones=(2.5, None)),
+            ch(3, "Pause 1 s+, no fillers, within 10 wpm, pitch movement 3+ · 3 rounds in a row", 3,
+               pauseBeforeReveal=(1.0, None), fillers=(None, 0), paceGap=(None, 10), pitchSemitones=(3, None)),
+        ),
+        (),
+        "Delivery that keeps listener and speaker in sync (Stephens, Silbert & Hasson): a clear pause just before "
+        "the reveal, a comfortable pace, a lively voice and no fillers.",
+        quotes=True,
+    ),
+    _story(
+        "story-retell",
+        "Tell It Again",
+        (IMPROVEMENT, STORY, HOOK, TENSION),
+        ("improvement", "story"),
+        (
+            ch(1, "Half a point better overall than your last telling", improvement=(0.5, None)),
+            ch(2, "A full point better, hook 4/5+ · 2 rounds in a row", 2, improvement=(1, None), hook=(4, None)),
+            ch(3, "Story 5/5 overall, hook and tension 4/5+ · 3 rounds in a row", 3,
+               story=(5, None), hook=(4, None), tension=(4, None)),
+        ),
+        ("hook", "tension", "meaning", "detail"),
+        "Revision is how storytellers improve: the same story told again, using the last feedback, with a stronger "
+        "hook, rising tension, vivid detail and a clear meaning.",
+    ),
+    _story(
+        "story-signature",
+        "Your Signature Story",
+        (STORY, HOOK, TENSION, MEANING, DETAIL, HOOK_SECONDS, REVEAL_AT, PAUSE_REVEAL, FILLERS),
+        ("story", "hook", "tension", "meaning"),
+        (
+            ch(1, "Hook, tension, meaning and detail all 4/5+, 90 s+",
+               hook=(4, None), tension=(4, None), meaning=(4, None), detail=(4, None), speakingSeconds=(90, None)),
+            ch(2, "All four 4/5+, question within 10 s, answered after 70%, at most 3 fillers · 2 rounds in a row", 2,
+               hook=(4, None), tension=(4, None), meaning=(4, None), detail=(4, None),
+               hookSeconds=(None, 10), revealAt=(70, None), fillers=(None, 3)),
+            ch(3, "Story 5/5, all four 4/5+, a 0.8 s+ pause before the reveal · 3 rounds in a row", 3,
+               story=(5, None), hook=(4, None), tension=(4, None), meaning=(4, None), detail=(4, None),
+               pauseBeforeReveal=(0.8, None)),
+        ),
+        ("hook", "tension", "meaning", "detail"),
+        "A 2-3 minute personal story using everything: an early question, a character who wants something, rising "
+        "tension, vivid detail and dialogue, a late reveal after a pause, and one sentence of meaning.",
+        quotes=True,
+        min_speech_ms=60_000,
+    ),
+)
+DRILLS.update({d.id: d for d in STORY_COURSE})
+
+
+def is_story(drill_id: str) -> bool:
+    return drill_id.startswith("story-")
+
+
 MAX_LEVEL = 3
 
 
@@ -589,6 +804,7 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
     Achievement("think-under-pressure", "Think Under Pressure", "Complete Think on Your Feet level 3"),
     Achievement("master-of-the-pause", "Master of the Pause", "Complete Pause, Don't Fill level 3"),
     Achievement("clear-speaker", "Clear Speaker", "Complete Clear Diction level 3 and Explain it Simply level 2"),
+    Achievement("master-storyteller", "Master Storyteller", "Complete Your Signature Story level 3"),
     Achievement(
         "structured-mind",
         "Structured Mind",

@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import type { BuildingKind } from '@/data/types'
-import { Auditorium, Campus, PracticeHall, Tower, type ShapeProps } from './shapes/Civic'
+import { Auditorium, Campus, Lab, PracticeHall, Tower, type ShapeProps } from './shapes/Civic'
 import { Cafe, Mall, Mart, Restaurant } from './shapes/Commerce'
 import { BusStop, House, Park } from './shapes/Domestic'
 
@@ -20,4 +20,5 @@ export const EXTERIORS: Record<BuildingKind, ComponentType<ShapeProps>> = {
   house: House,
   busStop: BusStop,
   park: Park,
+  lab: Lab,
 }

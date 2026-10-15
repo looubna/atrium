@@ -55,6 +55,7 @@ import { createPresentationSession } from '@/modules/presentation/api'
 import { DECK_ACCEPT, DeckError, loadDeck } from '@/lib/loadDeck'
 import { createSalesSession } from '@/modules/sales/api'
 import { holdFaces } from '@/platform/avatar/faceWarmup'
+import { StoryCourseList } from '../practice/StoryCourseList'
 import { firebase, firebaseConfigured, NotSignedIn } from '@/platform/firebase'
 import { useLiveCollection } from '@/platform/firestore/live'
 import { usePracticeProgress } from '@/modules/practice/api'
@@ -1768,27 +1769,42 @@ export function PracticePicker({
     const formats = PRACTICE_FORMATS[step.area] ?? []
     return (
       <div key="formats" className="anim-fade mt-4">
-        <StepHeader title={step.area} hint="Choose a format" onBack={() => setStep({ kind: 'areas' })} />
-        <div className="mt-3 flex flex-col gap-1.5">
-          {formats.map((format) => (
-            <button
-              key={format.id}
-              type="button"
-              onClick={() => setStep({ kind: 'setup', area: step.area, format })}
-              className="group flex items-center gap-3 rounded-xl border border-white/8 bg-white/4 px-3 py-2.5 text-left transition-all duration-200 hover:border-jade-400/40 hover:bg-jade-500/10 active:scale-[0.99]"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium text-chalk">{format.label}</div>
-                <div className="mt-0.5 text-[11px] text-faint">{format.note}</div>
-              </div>
-              <IconChevronRight
-                width={15}
-                height={15}
-                className="shrink-0 text-faint transition-colors group-hover:text-jade-400"
-              />
-            </button>
-          ))}
-        </div>
+        <StepHeader
+          title={step.area === 'Storytelling' ? 'Story Course' : step.area}
+          hint={step.area === 'Storytelling' ? 'One technique per step, in order' : 'Choose a format'}
+          onBack={() => setStep({ kind: 'areas' })}
+        />
+        {step.area === 'Storytelling' ? (
+          <div className="mt-3">
+            <StoryCourseList
+              onPick={(id) => {
+                const format = formats.find((f) => f.id === id)
+                if (format) setStep({ kind: 'setup', area: step.area, format })
+              }}
+            />
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-col gap-1.5">
+            {formats.map((format) => (
+              <button
+                key={format.id}
+                type="button"
+                onClick={() => setStep({ kind: 'setup', area: step.area, format })}
+                className="group flex items-center gap-3 rounded-xl border border-white/8 bg-white/4 px-3 py-2.5 text-left transition-all duration-200 hover:border-jade-400/40 hover:bg-jade-500/10 active:scale-[0.99]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium text-chalk">{format.label}</div>
+                  <div className="mt-0.5 text-[11px] text-faint">{format.note}</div>
+                </div>
+                <IconChevronRight
+                  width={15}
+                  height={15}
+                  className="shrink-0 text-faint transition-colors group-hover:text-jade-400"
+                />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -1878,7 +1894,7 @@ export function PracticePicker({
           </>
         )}
 
-        {format.destination !== 'meeting' && format.destination !== 'drill' && (
+        {format.destination !== 'meeting' && format.destination !== 'drill' && format.destination !== 'talk' && (
           <Section title="Slides" hint="Optional">
             <DeckPicker />
           </Section>

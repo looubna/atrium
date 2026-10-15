@@ -26,7 +26,9 @@ from app.platform import clients as clients_module
 from app.platform.agents import live_gateway
 from app.platform.agents.live import (
     AudioOut,
+    EndRequested,
     FakeLiveEngine,
+    InputText,
     Interrupted,
     OutputText,
     PanelTurn,
@@ -263,6 +265,8 @@ def test_kill_switch_and_quota(env: dict[str, Any]) -> None:
     runtime_config.reset_cache()
     month = time.strftime("m-%Y-%m", time.gmtime())
     env["db"].document(f"users/alice/usage/{month}").set({"liveSeconds": 10_000_000})
+    # The free plan's minutes are a one-off trial, counted over the account's whole life.
+    env["db"].document("users/alice/usage/all").set({"liveSeconds": 10_000_000})
     with env["client"].websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
         ws.send_json({"type": "auth", "idToken": "test:alice"})
         assert close_code(ws) == 4429
@@ -519,6 +523,196 @@ def test_a_colleague_asks_their_share_and_no_more(env: dict[str, Any]) -> None:
     assert spoken == [f"Daniel Brooks: {q}" for q in questions]
     # Nothing a colleague was refused was ever said to the candidate.
     assert not any("would you do differently" in t.get("text", "") for t in turns)
+
+
+def _question(conn: Any, text: str) -> None:
+    conn.inject(OutputText(text, finished=True), AudioOut(b"\x00\x00" * 2400), TurnComplete())
+
+
+def _wait_forwarded(conn: Any, audio_bytes: int) -> None:
+    """The server has passed this much of the user's audio on, so it has counted it."""
+    for _ in range(100):
+        if conn.received_audio_bytes >= audio_bytes:
+            return
+        time.sleep(0.02)
+    raise AssertionError("the user's audio never reached the model")
+
+
+def test_a_second_question_waits_for_an_answer_to_the_first(env: dict[str, Any]) -> None:
+    """Two questions back to back, with no word from the user between, is a double reply: only
+    the first is heard. Once the user has answered, the next question plays as normal."""
+    db, client, engine = env["db"], env["client"], env["engine"]
+    consent(db, "alice")
+    sid = create_session(client, "alice")
+
+    with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        auth(ws, "alice")
+        conn = engine.connections[0]
+        receive_until(ws, "turn_complete")
+        _question(conn, "How did the launch go?")
+        first = [e for e in turn_events(ws, "turn_complete") if e["type"] == "caption"]
+        assert first[-1]["text"] == "How did the launch go?"
+        # The model's own late reply on top: never shown or played.
+        _question(conn, "And what was your role in it?")
+        seq = answer(ws, 0, 1000)
+        _wait_forwarded(conn, seq * 3200)
+        _question(conn, "What would you do differently?")
+        heard = turn_events(ws, "turn_complete")
+        texts = [e["text"] for e in heard if e["type"] == "caption" and e["speaker"] == "interviewer"]
+        assert texts == ["What would you do differently?"]
+        ws.send_json({"type": "end"})
+        receive_until(ws, "ended", limit=60)
+    env["settle"]()
+
+
+def test_a_reply_never_talks_over_the_user(env: dict[str, Any]) -> None:
+    """A reply that starts while the user is speaking is held back (once): the next one plays."""
+    db, client, engine = env["db"], env["client"], env["engine"]
+    consent(db, "alice")
+    sid = create_session(client, "alice")
+
+    with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        auth(ws, "alice")
+        conn = engine.connections[0]
+        receive_until(ws, "turn_complete")
+        for i in range(10):
+            ws.send_bytes(loud(i, 1000 + i * 100))
+        _wait_forwarded(conn, 10 * 3200)
+        _question(conn, "Sorry, go on?")  # mid-sentence: dropped
+        _question(conn, "Got it. What happened next?")
+        heard = turn_events(ws, "turn_complete")
+        texts = [e["text"] for e in heard if e["type"] == "caption" and e["speaker"] == "interviewer"]
+        assert texts == ["Got it. What happened next?"]
+        ws.send_json({"type": "end"})
+        receive_until(ws, "ended", limit=60)
+    env["settle"]()
+
+
+def test_a_colleague_never_talks_over_the_user(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """A colleague's line waits for the user to pause; if they keep talking, it is not said."""
+    monkeypatch.setattr(live_gateway, "COLLEAGUE_HOLD_S", 0.3)
+    db, client, engine = env["db"], env["client"], env["engine"]
+    consent(db, "alice")
+    sid = create_session(client, "alice", panel="panel", mode="in_person")
+
+    with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        auth(ws, "alice")
+        conn = engine.connections[0]
+        join_panel(ws, conn, "in_person")
+        # The user is mid-sentence (their latest audio is speech) when Daniel's question comes.
+        for i in range(10):
+            ws.send_bytes(loud(i, 60_000 + i * 100))
+        _wait_forwarded(conn, 10 * 3200)
+        conn.inject(
+            AudioOut(b"\x00\x00" * 2400),
+            OutputText("Daniel, over to you.", finished=True),
+            PanelTurn("Daniel", "What was the hardest part?", "question"),
+            TurnComplete(),
+        )
+        time.sleep(1.0)  # longer than the hold: by now the line was played or dropped
+        ws.send_json({"type": "end"})
+        seen = turn_events(ws, "ended", limit=200)
+        # Neither the lead's hand-over (it would start over the user) nor Daniel's question is heard.
+        assert not any(e.get("text") == "What was the hardest part?" for e in seen)
+        assert "panel_speaker" not in [e["type"] for e in seen]
+    env["settle"]()
+
+
+def test_a_held_back_reply_never_silences_the_conversation(env: dict[str, Any]) -> None:
+    """A reply held back for talking over the user, then cut off by the model itself (no turn
+    complete): the model's next reply is heard, and a goodbye in the held-back one ends nothing."""
+    db, client, engine = env["db"], env["client"], env["engine"]
+    consent(db, "alice")
+    sid = create_session(client, "alice")
+
+    with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        auth(ws, "alice")
+        conn = engine.connections[0]
+        receive_until(ws, "turn_complete")
+        for i in range(10):
+            ws.send_bytes(loud(i, 1000 + i * 100))
+        _wait_forwarded(conn, 10 * 3200)
+        conn.inject(OutputText("Well, it was nice talking. Goodbye!", finished=True), AudioOut(b"\x00\x00" * 2400),
+                    EndRequested("goodbye"), Interrupted())
+        for i in range(10, 40):
+            ws.send_bytes(frame(i, 1000 + i * 100))
+        _wait_forwarded(conn, 40 * 3200)
+        _question(conn, "Sorry, go on: what happened then?")
+        heard = turn_events(ws, "turn_complete")
+        texts = [e["text"] for e in heard if e["type"] == "caption" and e["speaker"] == "interviewer"]
+        assert texts == ["Sorry, go on: what happened then?"]
+        assert "ended" not in [e["type"] for e in heard]
+        ws.send_json({"type": "end"})
+        receive_until(ws, "ended", limit=60)
+    env["settle"]()
+
+
+def test_the_conversation_lasts_the_time_the_user_chose(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """A goodbye long before the time is up is answered with "carry on", and the call stays open;
+    once the user says goodbye, the other side's goodbye ends it."""
+    monkeypatch.setattr(live_gateway, "END_GRACE_S", 0.2)
+    db, client, engine = env["db"], env["client"], env["engine"]
+    consent(db, "alice")
+    sid = create_session(client, "alice")
+
+    with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        auth(ws, "alice")
+        conn = engine.connections[0]
+        receive_until(ws, "turn_complete")
+        _question(conn, "Well, it was lovely talking to you. Goodbye!")
+        turn_events(ws, "turn_complete")
+        for _ in range(100):
+            if any("time is still left" in t for t in conn.received_text):
+                break
+            time.sleep(0.02)
+        assert any("time is still left" in t for t in conn.received_text)
+        time.sleep(0.5)  # longer than the grace: nothing has ended
+        conn.inject(InputText("Thanks, I have to go now. Bye!", finished=True))
+        _question(conn, "Of course. Take care, bye!")
+        assert receive_until(ws, "ended", limit=60)["reason"] == "interviewer_ended"
+    env["settle"]()
+
+
+def test_repeated_abuse_may_end_the_conversation_early(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one early end the other side may make on its own: after asking twice to stop."""
+    monkeypatch.setattr(live_gateway, "END_GRACE_S", 0.2)
+    db, client, engine = env["db"], env["client"], env["engine"]
+    consent(db, "alice")
+    sid = create_session(client, "alice")
+
+    with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        auth(ws, "alice")
+        conn = engine.connections[0]
+        receive_until(ws, "turn_complete")
+        conn.inject(OutputText("I'm going to end our conversation here.", finished=True), AudioOut(b"\x00\x00" * 2400),
+                    EndRequested("abuse: kept insulting after two warnings"), TurnComplete())
+        assert receive_until(ws, "ended", limit=60)["reason"] == "interviewer_ended"
+    env["settle"]()
+
+
+def test_a_colleague_called_by_name_always_answers(env: dict[str, Any]) -> None:
+    """A share limits interjections nobody asked for: called on by name, a colleague answers even
+    with none left (Grace, the note-taker, has no questions of her own)."""
+    db, client, engine = env["db"], env["client"], env["engine"]
+    consent(db, "alice")
+    sid = create_session(client, "alice", panel="panel", mode="in_person")
+
+    with client.websocket_connect(f"/api/v1/sessions/{sid}/live") as ws:
+        auth(ws, "alice")
+        conn = engine.connections[0]
+        join_panel(ws, conn, "in_person")
+        conn.inject(InputText("Grace, what's your view on this?", finished=True))
+        conn.inject(
+            AudioOut(b"\x00\x00" * 2400),
+            OutputText("Grace?", finished=True),
+            PanelTurn("Grace", "I'd keep the scope small at first.", "question"),
+            TurnComplete(),
+        )
+        events = turn_events(ws, "panel_speaker")
+        assert events[-1]["name"] == "Grace Lin"
+        ws.send_json({"type": "end"})
+        receive_until(ws, "ended", limit=80)
+    env["settle"]()
 
 
 def test_reconnect_before_the_greeting_starts_over(env: dict[str, Any]) -> None:

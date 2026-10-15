@@ -87,8 +87,21 @@ export const cityPose = (fov: number, aspect: number): CameraPose => {
   const ahead = height / Math.tan(pitch) - d
   const target = CITY_PIVOT.clone().addScaledVector(back, -ahead)
 
+  // The island is narrower than a wide screen: framed by its top and bottom edges alone, a landscape
+  // viewport shows water past both sides and the island's rim, a floating slab. Wider than
+  // CITY_FIT_ASPECT, the camera moves in along its view until the land fills the width.
+  if (aspect > CITY_FIT_ASPECT) {
+    const k = Math.max(CITY_MIN_ZOOM, CITY_FIT_ASPECT / aspect)
+    position.sub(target).multiplyScalar(k).add(target)
+  }
+
   return { position, target }
 }
+
+/** Widest viewport the island fills from its opening shot (measured at 1500×1000, 1280×720 and 852×393). */
+const CITY_FIT_ASPECT = 1.12
+/** Never closer than this share of the opening distance, however wide the screen. */
+const CITY_MIN_ZOOM = 0.62
 
 /** Rotate a local-frame offset into world space. */
 const rotateY = (vec: readonly [number, number, number], angle: number) => {

@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-ToolName = Literal["end_interview", "give_floor", "write_on_board"]
+ToolName = Literal["end_interview", "give_floor", "write_on_board", "find_research"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +89,10 @@ class LiveAgentSpec:
     #: (or another colleague) already asked one is dropped, and so is one put before the user has
     #: answered the last question at all. The prompt asks for this; models forget.
     one_question_per_turn: bool = False
+    #: The app practises in English only: a user who speaks another language is told so, in
+    #: English, and asked to carry on in English (`ENGLISH_ONLY_RULE`). Off in the Language Center,
+    #: where speaking other languages is the point.
+    english_only: bool = True
 
 
 @dataclass(frozen=True, slots=True)

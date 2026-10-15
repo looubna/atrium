@@ -1,5 +1,6 @@
 import { SpeakerVoice } from '../media/voiceFilter'
 import type { AvatarRenderer, AvatarState } from './types'
+import { faceIceServers } from './iceServers'
 
 /** What the server hands back for one LiveTalking face (our own lip-sync server). */
 export interface LiveTalkingConnection {
@@ -11,6 +12,11 @@ export interface LiveTalkingConnection {
 
 /** How long the face may take to appear before the interview goes on without it. */
 const JOIN_TIMEOUT_MS = 25_000
+/**
+ * The same on Cloud Run, where a face can also be loaded from storage and a fresh instance sets itself up
+ * first (~30 s in all). The loading screen covers the wait; giving up earlier dropped faces that were arriving.
+ */
+const CLOUD_RUN_JOIN_TIMEOUT_MS = 90_000
 /** Above this RMS the face's own track is carrying her voice (it is silent between turns). */
 const VOICE_RMS = 0.008
 /** Gaps between words shorter than this still count as speaking. */
@@ -41,6 +47,8 @@ export class LiveTalkingRenderer implements AvatarRenderer {
   private ended = false
   private meter: { ctx: AudioContext; timer: number } | null = null
   private lastVoiceAt = -Infinity
+  /** See setPlayoutBuffer; null keeps the browser's default. */
+  private playoutBufferMs: number | null = null
   private readonly endedListeners = new Set<(reason: string) => void>()
   private readonly release = () => this.dispose()
   /** The face plays what it is sent, so the voice is shaped for the speakers before it goes. */
@@ -66,7 +74,9 @@ export class LiveTalkingRenderer implements AvatarRenderer {
   }
 
   private async connect(video: HTMLVideoElement): Promise<void> {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    if (isCloudRun(this.session.url)) return this.connectCloudRun(video)
+    // Direct first, and a TURN relay when the network blocks the direct route (see iceServers.ts).
+    const pc = new RTCPeerConnection({ iceServers: await faceIceServers() })
     this.pc = pc
     const stream = new MediaStream()
     this.stream = stream
@@ -75,6 +85,7 @@ export class LiveTalkingRenderer implements AvatarRenderer {
     const gotVideo = new Promise<void>((resolve, reject) => {
       const timer = window.setTimeout(() => reject(new Error('the face did not appear')), JOIN_TIMEOUT_MS)
       pc.ontrack = (event) => {
+        this.applyPlayoutBuffer()
         stream.addTrack(event.track)
         const target = this.video ?? video
         if (target.srcObject !== stream) target.srcObject = stream
@@ -107,6 +118,80 @@ export class LiveTalkingRenderer implements AvatarRenderer {
     window.addEventListener('pagehide', this.release)
   }
 
+  /**
+   * The face server on Cloud Run: there, two requests may reach two different instances and nothing
+   * comes in over UDP. So the offer, the answer and then the voice all travel on one WebSocket
+   * (`/atrium/session`), and the video goes through the TURN relay, which both ends are given.
+   */
+  private async connectCloudRun(video: HTMLVideoElement): Promise<void> {
+    const iceServers = await faceIceServers()
+    const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: 'relay' })
+    this.pc = pc
+    const stream = new MediaStream()
+    this.stream = stream
+    pc.addTransceiver('video', { direction: 'recvonly' })
+    pc.addTransceiver('audio', { direction: 'recvonly' })
+    const gotVideo = this.trackStream(pc, stream, video, CLOUD_RUN_JOIN_TIMEOUT_MS)
+    gotVideo.catch(() => {}) // awaited below; this only keeps an early failure from going unhandled
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') this.end(pc.connectionState)
+    }
+
+    await pc.setLocalDescription(await pc.createOffer())
+    await iceGathered(pc)
+    const base = this.session.url.replace(/^http/, 'ws')
+    const socket = new WebSocket(`${base}/atrium/session?${new URLSearchParams({ token: this.session.token })}`)
+    socket.binaryType = 'arraybuffer'
+    this.socket = socket
+    const answer = await new Promise<{ sdp: string }>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error('the face server did not answer')), CLOUD_RUN_JOIN_TIMEOUT_MS)
+      socket.onopen = () =>
+        socket.send(JSON.stringify({ type: 'offer', sdp: pc.localDescription?.sdp, iceServers }))
+      socket.onmessage = (event) => {
+        if (typeof event.data !== 'string') return
+        const message = JSON.parse(event.data) as { type?: string; sdp?: string }
+        window.clearTimeout(timer)
+        if (message.type === 'answer' && message.sdp) resolve({ sdp: message.sdp })
+        else reject(new Error(`the face server refused the session (${message.type ?? 'unknown'})`))
+      }
+      socket.onclose = () => {
+        window.clearTimeout(timer)
+        reject(new Error('the face server closed the session'))
+      }
+    })
+    if (this.disposed) return
+    await pc.setRemoteDescription({ sdp: answer.sdp, type: 'answer' })
+    // From here the socket is the voice channel, exactly as /atrium/audio is on the VMs.
+    socket.onmessage = null
+    socket.send(JSON.stringify({ type: 'state', state: this.state }))
+    this.outbox.splice(0).forEach((frame) => socket.send(frame))
+    socket.onclose = () => {
+      if (this.socket === socket) this.end('socket closed')
+    }
+    await gotVideo
+    window.addEventListener('pagehide', this.release)
+  }
+
+  /** Puts the face's tracks on the page as they arrive; resolves on the first video track. */
+  private trackStream(pc: RTCPeerConnection, stream: MediaStream, video: HTMLVideoElement, timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error('the face did not appear')), timeoutMs)
+      pc.ontrack = (event) => {
+        this.applyPlayoutBuffer()
+        stream.addTrack(event.track)
+        const target = this.video ?? video
+        if (target.srcObject !== stream) target.srcObject = stream
+        target.muted = false
+        void target.play().catch(() => {})
+        if (event.track.kind === 'audio') this.listen(event.track)
+        if (event.track.kind === 'video') {
+          window.clearTimeout(timer)
+          resolve()
+        }
+      }
+    })
+  }
+
   /** Measures the face's voice as it is heard: the one source of truth for when she is talking. */
   private listen(track: MediaStreamTrack): void {
     if (this.meter || typeof AudioContext === 'undefined') return
@@ -123,6 +208,19 @@ export class LiveTalkingRenderer implements AvatarRenderer {
       if (Math.sqrt(sum / samples.length) > VOICE_RMS) this.lastVoiceAt = performance.now()
     }, METER_INTERVAL_MS)
     this.meter = { ctx, timer }
+  }
+
+  setPlayoutBuffer(ms: number): void {
+    this.playoutBufferMs = ms
+    this.applyPlayoutBuffer()
+  }
+
+  private applyPlayoutBuffer(): void {
+    if (this.playoutBufferMs === null || !this.pc) return
+    for (const receiver of this.pc.getReceivers()) {
+      // Chrome and Safari; elsewhere the default buffer stays.
+      if ('jitterBufferTarget' in receiver) (receiver as { jitterBufferTarget: number | null }).jitterBufferTarget = this.playoutBufferMs
+    }
   }
 
   isVoicing(): boolean {
@@ -232,6 +330,15 @@ export class LiveTalkingRenderer implements AvatarRenderer {
       this.meter = null
     }
     if (this.video) this.video.srcObject = null
+  }
+}
+
+/** The face server runs on Cloud Run (one WebSocket, relayed video) rather than on a VM. */
+export function isCloudRun(url: string): boolean {
+  try {
+    return new URL(url).hostname.endsWith('.run.app')
+  } catch {
+    return false
   }
 }
 

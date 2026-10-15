@@ -7,7 +7,6 @@ import { P, TV } from '../palette'
 import { SkyDome, type SkyColors } from '../environment/SkyDome'
 import { SUN } from '../environment/Lighting'
 import { Desk, IN, PottedPlant, TaskChair } from './furniture'
-import { MeetingRoom } from './MeetingRoom'
 
 /**
  * The Company, ground floor.
@@ -989,7 +988,6 @@ export default function CompanyInterior() {
       <Shell />
       <Entrance />
       <Reception />
-      <MeetingRoom />
       <OpenOffice />
       <Auditorium />
       <ZonePads />

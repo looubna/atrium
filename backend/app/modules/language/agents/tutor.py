@@ -185,4 +185,6 @@ class LanguageLiveAgentFactory:
             may_end_early=True,
             # Learners pause to find a word: the tutor waits longer than in a meeting before answering.
             silence_duration_ms=1800,
+            # Learners speak the language they are learning, and their own: never "English only" here.
+            english_only=False,
         )

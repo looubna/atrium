@@ -16,7 +16,8 @@ PRACTICE = Path(__file__).resolve().parents[3] / "src" / "data" / "practice.ts"
 
 def test_scenarios_match_the_page() -> None:
     source = PRACTICE.read_text()
-    block = source[source.index("LEADERSHIP_SCENARIOS"):source.index("export interface LeadershipSetup")]
+    # Only the scenarios array: the field list (LEADERSHIP_DOMAINS) that follows has ids and labels too.
+    block = source[source.index("LEADERSHIP_SCENARIOS"):source.index("LEADERSHIP_DOMAINS")]
     page = dict(re.findall(r"id: '([a-z]+)', label: '([^']+)'", block))
     assert page == {s.value: BRIEFS[s].label for s in Scenario}
 

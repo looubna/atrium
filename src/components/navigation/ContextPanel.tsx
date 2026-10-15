@@ -104,7 +104,9 @@ function LocationCard({ id }: { id: string }) {
   const destination = mine?.format.destination
 
   return (
-    <div className="glass w-[min(92vw,25rem)] rounded-2xl p-4 sm:p-5">
+    // Never taller than the screen below the top bar: a long setup (the scholarship preparation)
+    // scrolls inside the card instead of running off the top.
+    <div className="glass max-h-[calc(100dvh-env(safe-area-inset-top,0px)-6rem)] w-[min(92vw,25rem)] overflow-y-auto overscroll-contain rounded-2xl p-4 sm:p-5">
       <div className="flex items-center gap-2">
         <span
           className="size-1.5 rounded-full"
@@ -130,8 +132,9 @@ function LocationCard({ id }: { id: string }) {
       <div className="mt-5 flex items-center gap-2">
         <Button
           variant="primary"
-          // These sessions need no interior: each opens its own screen.
-          disabled={!loc.hasInterior && !ownScreen && !loc.opens}
+          // These sessions need no interior: each opens its own screen. A building is entered only
+          // for a practice, so without one there is nothing to go in to.
+          disabled={(!loc.hasInterior && !ownScreen && !loc.opens) || (!mine && !loc.opens && !loc.arrival)}
           onClick={enter}
           // While a setup form is open it has its own Confirm: one green button at a time. City stays.
           className={cn('flex-1', setupOpen && 'hidden')}
@@ -139,7 +142,7 @@ function LocationCard({ id }: { id: string }) {
         >
           <IconEnter width={15} height={15} />
           {loc.opens === 'language' ? 'Open Language Center' : ENTER_LABEL[destination ?? ''] ??
-            (!loc.hasInterior ? 'Interior coming soon' : 'Enter')}
+            (!loc.hasInterior ? 'Interior coming soon' : !mine && !loc.arrival ? 'Choose a practice above' : 'Enter')}
         </Button>
         <Button variant="ghost" onClick={goToCity} aria-label="Back to city" className={cn(setupOpen && 'ml-auto')}>
           <IconArrowLeft width={15} height={15} />

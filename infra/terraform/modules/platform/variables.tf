@@ -96,3 +96,9 @@ variable "livetalking_secret" {
   description = "Shared secret with the LiveTalking face server that renders the interviewers. Set FACE_VMS (zone/name,... started on demand) or LIVETALKING_URL (a fixed server) in app_config too. Empty means no face: interviews run on audio alone."
   default     = ""
 }
+
+variable "revenuecat_enabled" {
+  type        = bool
+  description = "Paid plans through RevenueCat: the API reads the revenuecat-api-key and revenuecat-webhook-secret secrets (created outside Terraform). False means the billing webhook answers 503."
+  default     = false
+}

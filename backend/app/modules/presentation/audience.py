@@ -27,6 +27,9 @@ class Format(StrEnum):
     VIRTUAL = "virtual"
     #: A research talk at the university: the chair and two academics, questions on method and evidence.
     ACADEMIC = "academic"
+    #: A thesis defence in the university lecture hall: the committee chair and two examiners at the
+    #: front table, an audience behind them; the committee questions the candidate after the talk.
+    DEFENCE = "defence"
 
 
 class Questions(StrEnum):
@@ -167,6 +170,12 @@ def briefing(context: dict[str, Any]) -> dict[str, Any]:
         Format.ACADEMIC: (
             "In a university classroom, from the lectern, with a session chair and questions from academics in the "
             "room. For an accurate analysis of your posture and gestures, stand back so your whole body is on camera."
+        ),
+        Format.DEFENCE: (
+            "In the university lecture hall, from the lectern, before your thesis committee at the front table (the "
+            "chair and two examiners), with an audience behind them. Present your thesis, then the committee questions "
+            "you on it. For an accurate analysis of your posture and gestures, stand back so your whole body is on "
+            "camera."
         ),
     }[fmt]
     how = ("They listen to your whole talk, then ask about it and your slides."

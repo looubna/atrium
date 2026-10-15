@@ -1,7 +1,8 @@
 """Per-user usage metering and quota reservation.
 
-Counters live in `users/{uid}/usage/m-YYYY-MM` (monthly) and
-`users/{uid}/usage/d-YYYY-MM-DD` (daily). `reserve` checks and increments in
+Counters live in `users/{uid}/usage/m-YYYY-MM` (monthly),
+`users/{uid}/usage/d-YYYY-MM-DD` (daily) and `users/{uid}/usage/all` (since the account
+was created: the free trial's minutes). `reserve` checks and increments in
 one transaction, so concurrent requests cannot both pass the last unit of a
 quota.
 """
@@ -37,15 +38,21 @@ class Metric(StrEnum):
 class Period(StrEnum):
     DAY = "day"
     MONTH = "month"
+    #: Never resets: what the account has used in total.
+    ALL = "all"
 
 
 def period_key(period: Period, now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
+    if period is Period.ALL:
+        return "all"
     return f"d-{now:%Y-%m-%d}" if period is Period.DAY else f"m-{now:%Y-%m}"
 
 
 def period_resets_at(period: Period, now: datetime | None = None) -> datetime:
     now = now or datetime.now(UTC)
+    if period is Period.ALL:
+        return datetime.max.replace(tzinfo=UTC)
     if period is Period.DAY:
         return datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1)
     last_day = calendar.monthrange(now.year, now.month)[1]

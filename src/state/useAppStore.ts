@@ -273,6 +273,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
     if (!loc.hasInterior) return
+    // The building is only ever entered for a practice: every practice set inside it covers the 3D
+    // interior with its own filmed room, and nothing else should show it.
+    if (!mine && !loc.arrival) return
 
     clearTimers()
 
@@ -285,13 +288,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ view: 'entering', hoveredId: null, poseNonce: s.poseNonce + 1 }))
 
     after(T.veilStart, () => set({ veil: 1 }))
+    // Straight into the room the session is set in (or the lobby): no 3D front door and pass reader
+    // on the way. Only a live in-person interview arrives at the door, which it films itself (a pass
+    // to tap, the walk in, the reception). A photo-only interior has its own room.
+    const arrival: InteriorZone =
+      loc.arrival ??
+      (isLiveInPerson(mine)
+        ? 'door'
+        : mine?.format.destination === 'meeting'
+          ? 'meeting'
+          : mine?.format.destination === 'theater'
+            ? 'theater'
+            : 'entrance')
     after(T.swap, () =>
       set((s) => ({
         view: 'interior',
-        // Arrive outside the front doors, where the pass opens the building — or, in a
-        // photo-only interior, straight in the room.
-        interiorZone: loc.arrival ?? 'door',
-        passScanned: Boolean(loc.arrival),
+        interiorZone: arrival,
+        passScanned: arrival !== 'door',
         raisedHands: [],
         visited: s.visited.includes(loc.id) ? s.visited : [...s.visited, loc.id],
       })),

@@ -86,6 +86,8 @@ ATRIUM_PRELOAD=$(md atrium-preload || true)
 ENV
 install_if_changed /tmp/atrium-face.env /etc/atrium-face.env 600
 
+# Batch 16 (the default): batch 8 was tried on 2026-09-27 to cut ~0.3 s of delay, but a real session then
+# rendered at only ~25 fps on the L4, frames arrived late and the mouth ran out of sync. Keep 16.
 cat > /tmp/livetalking.service <<UNIT
 [Unit]
 Description=LiveTalking face server (MuseTalk)
@@ -109,3 +111,93 @@ nvidia-smi -pm 1 || true
 systemctl daemon-reload
 systemctl enable livetalking
 if [ "$changed" = 1 ]; then systemctl restart livetalking; else systemctl start livetalking; fi
+
+# Watchdog: systemd restarts the face server if it exits (Restart=always), but not if it hangs. Every 30 s
+# this asks /atrium/health locally; after 3 failures in a row it restarts the service. Never in the first
+# 240 s after the service (re)started, while it loads its models, so a cold start is never cut short.
+cat > /tmp/atrium-watchdog.sh <<'WD'
+#!/bin/bash
+fails=0
+while sleep 30; do
+  since=$(systemctl show livetalking -p ActiveEnterTimestampMonotonic --value)
+  now=$(awk '{print int($1*1000000)}' /proc/uptime)
+  [ "$since" -gt 0 ] && [ $(( (now - since) / 1000000 )) -lt 240 ] && { fails=0; continue; }
+  if curl -sf -m 10 -o /dev/null http://127.0.0.1:8010/atrium/health; then fails=0; else fails=$((fails + 1)); fi
+  if [ "$fails" -ge 3 ]; then
+    logger -t atrium-watchdog "face server not answering 3 times in a row: restarting"
+    systemctl restart livetalking; fails=0
+  fi
+done
+WD
+cat > /tmp/atrium-watchdog.service <<'UNIT'
+[Unit]
+Description=Restarts the face server if it stops answering
+After=livetalking.service
+
+[Service]
+ExecStart=/usr/local/bin/atrium-watchdog.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+wd_changed=0
+cmp -s /tmp/atrium-watchdog.sh /usr/local/bin/atrium-watchdog.sh || { install -m 755 /tmp/atrium-watchdog.sh /usr/local/bin/atrium-watchdog.sh; wd_changed=1; }
+cmp -s /tmp/atrium-watchdog.service /etc/systemd/system/atrium-watchdog.service || {
+  install -m 644 /tmp/atrium-watchdog.service /etc/systemd/system/atrium-watchdog.service; wd_changed=1; }
+systemctl daemon-reload
+systemctl enable atrium-watchdog
+if [ "$wd_changed" = 1 ]; then systemctl restart atrium-watchdog; else systemctl start atrium-watchdog; fi
+
+# https in front of the face server, for phones: Android and iOS WebViews refuse plain http. Caddy
+# answers at <external-ip-with-dashes>.sslip.io (a public name for any IP) with a Let's Encrypt
+# certificate kept in /var/lib/caddy, and proxies to :8010, WebSockets included. With a static IP
+# the name and certificate stay the same across boots. The API uses it when FACE_VM_HTTPS=true.
+# Only our three signed endpoints are exposed (/atrium/offer, /atrium/audio, /atrium/health): LiveTalking's
+# own routes (/offer, /human, /humanaudio, ...) check nothing and stay reachable only on :8010 from the
+# firewall's allow-list. And never without a secret: with ATRIUM_SECRET unset the server accepts any avatar.
+IP=$(curl -sf -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip || true)
+if [ -n "$IP" ] && [ -n "$(md atrium-secret)" ]; then
+  if ! command -v caddy >/dev/null; then
+    curl -fsSL -o /usr/local/bin/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
+    chmod 755 /usr/local/bin/caddy
+  fi
+  mkdir -p /etc/caddy /var/lib/caddy
+  cat > /tmp/Caddyfile <<CADDYFILE
+${IP//./-}.sslip.io {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	@atrium path /atrium/offer /atrium/audio /atrium/health
+	handle @atrium {
+		reverse_proxy 127.0.0.1:8010
+	}
+	handle {
+		respond 404
+	}
+}
+CADDYFILE
+  cat > /tmp/caddy.service <<CADDY
+[Unit]
+Description=Caddy (https for the face server)
+After=network-online.target
+
+[Service]
+Environment=XDG_DATA_HOME=/var/lib/caddy XDG_CONFIG_HOME=/var/lib/caddy
+ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+CADDY
+  caddy_changed=0
+  cmp -s /tmp/Caddyfile /etc/caddy/Caddyfile || { install -m 644 /tmp/Caddyfile /etc/caddy/Caddyfile; caddy_changed=1; }
+  cmp -s /tmp/caddy.service /etc/systemd/system/caddy.service || {
+    install -m 644 /tmp/caddy.service /etc/systemd/system/caddy.service; caddy_changed=1; }
+  systemctl daemon-reload
+  systemctl enable caddy
+  if [ "$caddy_changed" = 1 ]; then systemctl restart caddy; else systemctl start caddy; fi
+fi

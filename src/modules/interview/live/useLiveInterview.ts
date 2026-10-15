@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { usePaywall } from '@/components/billing/Paywall'
 import captureWorkletUrl from '@/platform/media/pcm-capture.worklet.ts?worker&url'
 import { appCheckToken } from '@/platform/appcheck'
 import { websocketUrl } from '@/platform/env'
@@ -8,6 +9,7 @@ import { CloseCode, ForbiddenReason, type EndReason, type ServerMessage } from '
 import type { AvatarRenderer } from '@/platform/avatar/types'
 import { PcmPlayer, type SpeakerTone } from '@/platform/media/pcmPlayer'
 import { setKeepAwake } from '@/platform/native'
+import { useConversationLoading } from '@/platform/live/conversationLoading'
 
 export type LivePhase = 'idle' | 'starting' | 'connecting' | 'live' | 'reconnecting' | 'ended' | 'failed'
 
@@ -74,6 +76,8 @@ const INITIAL: LiveInterviewState = {
 
 /** After the interviewer stops, keep the mic closed briefly so the speaker's tail doesn't echo back. */
 const ECHO_TAIL_S = 0.3
+/** The start-of-call loader gives up after this long (the face wait is capped at three minutes). */
+const OPENING_LOADER_MAX_S = 200
 /** A face speaks the words about a second after our clock schedules them; keep the mic closed that much longer. */
 const FACE_VOICE_TAIL_S = 1.2
 const NO_FACES: Record<string, AvatarRenderer> = {}
@@ -203,6 +207,8 @@ export function useLiveInterview(
   holdOpening = false,
   /** How the voice is shaped for the speakers; the default is the interview voices'. */
   speakerTone?: SpeakerTone,
+  /** The loading screen waits for `begin()` (a held opening the user walks in to), not the start. */
+  loaderAfterBegin = false,
 ): LiveInterviewControls {
   const [state, setState] = useState<LiveInterviewState>(INITIAL)
   const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null)
@@ -213,6 +219,8 @@ export function useLiveInterview(
   const clientRef = useRef<LiveClient | null>(null)
   const beganRef = useRef(false)
   const speakerToneRef = useRef(speakerTone)
+  const loaderAfterBeginRef = useRef(loaderAfterBegin)
+  loaderAfterBeginRef.current = loaderAfterBegin
   const holdOpeningRef = useRef(holdOpening)
   holdOpeningRef.current = holdOpening
   const playerRef = useRef<PcmPlayer | null>(null)
@@ -331,6 +339,11 @@ export function useLiveInterview(
       for (const seq of faceTurns.keys()) faceTurns.set(seq, [])
     }
     dropFaceHandoffsRef.current = dropFaceHandoffs
+    // The loading screen: from the start (the face connecting and settling happen behind it), or
+    // where the user walks in first, from when they sit down; until the other side's first words.
+    let heardReply = false
+    let liveSince: number | null = loaderAfterBeginRef.current && !beganRef.current ? null : ctx.currentTime
+    const setLoading = useConversationLoading.getState().set
     const client = new LiveClient({
       url: websocketUrl(`/api/v1/sessions/${sessionId}/live`),
       idToken,
@@ -376,7 +389,10 @@ export function useLiveInterview(
       },
       onStatus: (status, code, reason) => {
         if (status === 'failed') {
-          patch({ phase: 'failed', failure: failureFor(code, reason) })
+          const failure = failureFor(code, reason)
+          patch({ phase: 'failed', failure })
+          // Out of live minutes: offer the plans right away, in every room.
+          if (failure === 'quota') usePaywall.getState().show('minutes')
           teardown()
         } else if (status === 'ended') {
           patch({ phase: 'ended' })
@@ -492,6 +508,10 @@ export function useLiveInterview(
         quietPolls.add(poll)
       },
       onSpeakingChange: (speaking) => {
+        if (speaking) {
+          heardReply = true
+          setLoading(false)
+        }
         if (!speaking) pendingAvatarRef.current?.()
         patch({ interviewerSpeaking: speaking, ...(speaking ? {} : { leadVoicing: false, panelSpeaker: null }) })
       },
@@ -546,10 +566,16 @@ export function useLiveInterview(
     document.addEventListener('visibilitychange', onVisible)
     const timer = window.setInterval(() => {
       if (deadlineRef.current !== null) patch({ timeLeftMs: Math.max(0, deadlineRef.current - performance.now()) })
-    }, 500)
+      const now = ctx.currentTime
+      if (liveSince === null && beganRef.current) liveSince = now
+      const faceVoicing = [avatarRef.current, ...Object.values(panelFacesRef.current)].some((f) => f?.isVoicing?.())
+      if (player.isSpeaking || faceVoicing) heardReply = true
+      setLoading(!heardReply && liveSince !== null && now - liveSince < OPENING_LOADER_MAX_S)
+    }, 250)
 
     cleanupRef.current = () => {
       window.clearInterval(timer)
+      setLoading(false)
       panelTimers.forEach((t) => window.clearTimeout(t))
       quietPolls.forEach((t) => window.clearInterval(t))
       quietPolls.clear()

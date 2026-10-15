@@ -17,6 +17,16 @@ export type DrillId =
   | 'pace-control'
   | 'speak-to-the-lens'
   | 'project-to-the-end'
+  // The Story Course in the Park, in order (STORY_COURSE).
+  | 'story-spine'
+  | 'story-orientation'
+  | 'story-curiosity'
+  | 'story-tension'
+  | 'story-vivid'
+  | 'story-meaning'
+  | 'story-delivery'
+  | 'story-retell'
+  | 'story-signature'
 
 export interface Drill {
   id: DrillId
@@ -33,6 +43,8 @@ export interface Drill {
   why?: string
   /** The drill uses the camera (on-device face tracking only). */
   camera?: boolean
+  /** A weak and a strong version of the technique, shown before the first round (Story Course). */
+  example?: { weak: string; strong: string }
 }
 
 export const DRILLS: Record<DrillId, Drill> = {
@@ -171,6 +183,153 @@ export const DRILLS: Record<DrillId, Drill> = {
       'Hit the last word as firmly as the first',
     ],
     why: 'Voice coaches fix trailing off with diaphragmatic breathing and full-energy sentence endings.',
+  },
+  // The Story Course (Park → Storytelling). Each step trains one technique with research behind it;
+  // the source is named in `why`. Rules, measurements and challenges: backend practice/catalog.py.
+  'story-spine': {
+    id: 'story-spine',
+    title: 'The Spine: And, But, Therefore',
+    goal: 'Tell a whole story in about 30 seconds on And, But, Therefore.',
+    prepSeconds: 20,
+    speakSeconds: 45,
+    tips: [
+      'Start with the situation: “I had just moved to Seoul, and…”',
+      'Turn it with BUT: the problem or the surprise',
+      'Finish with THEREFORE: what happened because of it',
+    ],
+    why: 'Strong stories turn on “but” and “therefore”; weak ones pile up “and… and… and”, and feel like a list. We count your buts per and — the Narrative Index from Randy Olson’s And-But-Therefore framework.',
+    example: {
+      weak: 'I moved to Seoul and I started a new job and I met my team and we worked on a project and it went well.',
+      strong: 'I moved to Seoul for my dream job, but on day one my manager quit — so I had to lead a team I’d met that morning.',
+    },
+  },
+  'story-orientation': {
+    id: 'story-orientation',
+    title: 'Set the Scene',
+    goal: 'In the first 15 seconds: who, where, when — and what someone wants.',
+    prepSeconds: 30,
+    speakSeconds: 75,
+    tips: [
+      'Name the person and the place: “My grandmother, in her tiny kitchen in Fez…”',
+      'Say when: “the night before my final exam…”',
+      'Say what they wanted — that’s what the listener will root for',
+    ],
+    why: 'Studying hundreds of recorded personal stories, the linguist William Labov found they open with an “orientation” — who, where, when — before the action. Listeners need someone to care about first. Large text studies find strong stories front-load these scene-setting words (Boyd, Blackburn & Pennebaker, 2020).',
+    example: {
+      weak: 'So this thing happened once, it was kind of crazy.',
+      strong: 'It was 6 a.m. in a hospital corridor in Lyon, and my brother — who had never been ill a day in his life — was asking for a priest.',
+    },
+  },
+  'story-curiosity': {
+    id: 'story-curiosity',
+    title: 'The Curiosity Gap',
+    goal: 'Open a question in the first 10 seconds — and don’t answer it until late.',
+    prepSeconds: 30,
+    speakSeconds: 90,
+    tips: [
+      'Start with a line that raises a question: “The email that got me fired was three words long.”',
+      'Hold the answer back; give small clues on the way',
+      'Reveal it near the end, not in the middle',
+    ],
+    why: 'Curiosity is a gap between what we know and what we want to know (Loewenstein, 1994). Brain scans show curiosity activates the brain’s reward system and improves memory for the answer (Kang et al., 2009) — this is the “dopamine” of a good story.',
+    example: {
+      weak: 'I want to tell you about the time I lost my job. It was because of an email I sent. Let me explain.',
+      strong: 'The email that got me fired was three words long. … [the build-up] … Three words: “Reply all: agreed.”',
+    },
+  },
+  'story-tension': {
+    id: 'story-tension',
+    title: 'Rising Tension',
+    goal: 'Put an obstacle in the way and make it worse, step by step, up to a climax.',
+    prepSeconds: 30,
+    speakSeconds: 90,
+    tips: [
+      'Give the main character a clear goal and a clear obstacle',
+      'Escalate: each new moment raises the stakes',
+      'Put the hardest moment just before the end',
+    ],
+    why: 'Stories that follow the classic dramatic arc hold attention as tension rises, and the empathy people feel peaks at the resolution (Paul Zak’s research on the dramatic arc). Across thousands of narratives, words of doubt and reasoning peak near the climax (Boyd et al., 2020).',
+    example: {
+      weak: 'Then we missed the bus. Then it rained. Then we got there.',
+      strong: 'We missed the last bus — fine, we’d walk. Then the rain started. Then my phone died, with the only copy of the address on it.',
+    },
+  },
+  'story-vivid': {
+    id: 'story-vivid',
+    title: 'Make It Vivid',
+    goal: 'Make the listener see it: names, numbers, senses and one line of dialogue.',
+    prepSeconds: 30,
+    speakSeconds: 90,
+    tips: [
+      'Swap general words for specific ones: not “a car” but “a rusty red Fiat”',
+      'Add one sense: a sound, a smell, the temperature',
+      'Quote someone: “He looked at me and said, ‘You’re late.’”',
+    ],
+    why: 'People are most moved and persuaded by stories that “transport” them — vivid images, feeling and full attention together (Green & Brock, 2000, confirmed by later meta-analyses). Concrete words are also remembered better than abstract ones.',
+    example: {
+      weak: 'My boss was upset about the report.',
+      strong: 'My boss dropped the report on my desk — 42 pages, a coffee ring on the cover — and said, “Did you read this before you sent it?”',
+    },
+  },
+  'story-meaning': {
+    id: 'story-meaning',
+    title: 'Resolution and Meaning',
+    goal: 'Say how it ended, what it meant — and close by returning to the opening.',
+    prepSeconds: 30,
+    speakSeconds: 90,
+    tips: [
+      'Answer the question you opened',
+      'Say what changed in one sentence: “That’s when I learned…”',
+      'End by calling back to your first image or line',
+    ],
+    why: 'Labov found the stories people tell well include an “evaluation” — the teller saying why it mattered — and a coda that brings the listener back to now. A callback closes the loop and makes the point stick.',
+    example: {
+      weak: '…and yeah, so that’s what happened. Anyway.',
+      strong: '…I never got that job. But I got my brother back. Three words in an email cost me a career; three words in a hospital corridor gave me a family.',
+    },
+  },
+  'story-delivery': {
+    id: 'story-delivery',
+    title: 'Deliver the Reveal',
+    goal: 'Tell a story with a clear pause just before the reveal, at an easy pace, without fillers.',
+    prepSeconds: 30,
+    speakSeconds: 90,
+    tips: [
+      'Pause for a full second right before the big moment',
+      'Slow down for the key sentence; speed up in the action',
+      'Replace “um” with silence',
+    ],
+    why: 'When communication works, the listener’s brain activity follows the speaker’s — and the closer they are in sync, the better the listener understands (Stephens, Silbert & Hasson, 2010). A clear pace and a well-placed pause give them time to anticipate.',
+    example: {
+      weak: '…and then um basically it turned out it was empty so yeah.',
+      strong: '…he lifted the lid. [one-second pause] It was empty.',
+    },
+  },
+  'story-retell': {
+    id: 'story-retell',
+    title: 'Tell It Again',
+    goal: 'Tell your last story again, using its feedback — and make it better.',
+    prepSeconds: 30,
+    speakSeconds: 90,
+    tips: [
+      'Reread your last “next try” before you start',
+      'Keep what worked; change one or two things',
+      'Aim for a stronger hook, rising tension and a clearer meaning',
+    ],
+    why: 'Deliberate practice — repeating one skill with specific feedback — is how experts improve (Ericsson). Telling the same story again shows exactly how much better it became.',
+  },
+  'story-signature': {
+    id: 'story-signature',
+    title: 'Your Signature Story',
+    goal: 'Tell a 2–3 minute personal story using everything you’ve learned.',
+    prepSeconds: 60,
+    speakSeconds: 180,
+    tips: [
+      'Hook in the first 10 seconds, then set the scene',
+      'Rising tension, vivid detail and one line of dialogue',
+      'Pause before the reveal; end with what it meant',
+    ],
+    why: 'A signature story is one you will tell again and again — in interviews, pitches, toasts. Everything in this course comes together here.',
   },
 }
 
@@ -423,6 +582,59 @@ const PACE_PASSAGES = [
   'My greatest strength is staying calm when plans change. Last spring, a supplier failed a week before our launch. Instead of panicking, I listed our options, called two backup suppliers, and shared a clear update with the team by the afternoon. We launched only three days late, and the process we wrote that week is still how the company handles supply risks today.',
 ]
 
+/** What a Story Course round is about: a moment most people have lived, so everyone has a story. */
+const STORY_SEEDS = [
+  'A time you were completely wrong about someone',
+  'The day everything changed',
+  'A stranger who taught you something',
+  'Your worst first day',
+  'A risk that paid off',
+  'A risk that didn’t',
+  'The best advice you ignored',
+  'A time you got lost',
+  'A mistake you’re glad you made',
+  'Something you lost — and found again',
+  'The moment you knew you had to leave',
+  'A teacher you’ll never forget',
+  'A time you had to be brave',
+  'An unexpected phone call',
+  'A meal you’ll never forget',
+  'The hardest decision you made this year',
+  'A time you surprised yourself',
+  'A promise you kept — or broke',
+  'Your first time abroad',
+  'A time a plan fell apart',
+  'Someone who changed your mind',
+  'A secret you kept for too long',
+  'The day you almost gave up',
+  'A small moment that meant a lot',
+  'A time you helped a stranger',
+]
+
+/** The capstone: the stories worth telling for years. */
+const SIGNATURE_SEEDS = [
+  'A moment that shaped who you are',
+  'Why you do the work you do',
+  'A failure that taught you something',
+  'The person who changed your life',
+  'The day you became an adult',
+]
+
+/** The Story Course, in the order its steps unlock. */
+export const STORY_COURSE: DrillId[] = [
+  'story-spine',
+  'story-orientation',
+  'story-curiosity',
+  'story-tension',
+  'story-vivid',
+  'story-meaning',
+  'story-delivery',
+  'story-retell',
+  'story-signature',
+]
+
+export const isStoryDrill = (id: string): boolean => id.startsWith('story-')
+
 /** Seconds to read `text` at 160 (fast end) and 130 (slow end) words a minute. */
 export function paceWindow(text: string): { words: number; min: number; max: number } {
   const words = text.split(/\s+/).filter(Boolean).length
@@ -445,6 +657,8 @@ export type DrillPrompt =
   | { kind: 'paced'; text: string }
   | { kind: 'lens'; question: string }
   | { kind: 'projection'; question: string }
+  /** The Story Course: what to tell a story about; `retell` tells the user's last story again. */
+  | { kind: 'story'; seed: string; retell?: boolean }
 
 const pick = <T,>(list: T[], avoid?: T): T => {
   const pool = list.length > 1 && avoid !== undefined ? list.filter((x) => x !== avoid) : list
@@ -506,7 +720,24 @@ export function makePrompt(id: DrillId, previous?: DrillPrompt, framework?: stri
       return { kind: 'lens', question: pick(INTERVIEW_QUESTIONS, previousQuestion(previous)) }
     case 'project-to-the-end':
       return { kind: 'projection', question: pick(INTERVIEW_QUESTIONS, previousQuestion(previous)) }
+    case 'story-signature':
+      return { kind: 'story', seed: pick(SIGNATURE_SEEDS, previousSeed(previous)) }
+    case 'story-retell':
+      // DrillStage swaps in the user's last story once progress has loaded.
+      return { kind: 'story', seed: pick(STORY_SEEDS, previousSeed(previous)), retell: true }
+    case 'story-spine':
+    case 'story-orientation':
+    case 'story-curiosity':
+    case 'story-tension':
+    case 'story-vivid':
+    case 'story-meaning':
+    case 'story-delivery':
+      return { kind: 'story', seed: pick(STORY_SEEDS, previousSeed(previous)) }
   }
+}
+
+function previousSeed(previous?: DrillPrompt): string | undefined {
+  return previous?.kind === 'story' ? previous.seed : undefined
 }
 
 function previousQuestion(previous?: DrillPrompt): string | undefined {

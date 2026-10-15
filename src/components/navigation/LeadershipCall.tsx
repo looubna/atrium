@@ -8,6 +8,7 @@ import { useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
 import { IconMic, IconMicOff, IconPhoneOff, IconVideo, IconVideoOff } from '../ui/Icon'
 import { AvatarTile } from './AvatarTile'
+import { RotateHint } from './RotateHint'
 
 /**
  * Leadership practice: a video call, like Zoom, that the user leads with their team.
@@ -341,6 +342,8 @@ function Call({ sessionId, team, scenario, briefing }: {
 
   return (
     <div className="anim-fade absolute inset-0 z-[46] flex flex-col bg-[#0f1115]" role="region" aria-label="Leadership call">
+      {/* A team call stacks its tiles upright; sideways they sit side by side, bigger. */}
+      {!oneToOne && <RotateHint who="the whole team" />}
       {/* Top bar, as in a meeting app: what the meeting is and how long is left. */}
       <div className="flex items-center justify-between px-4 pb-2 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] text-[12.5px] text-white/80">
         <div className="flex items-center gap-2">
@@ -375,7 +378,7 @@ function Call({ sessionId, team, scenario, briefing }: {
 
         {/* Before joining: the user opens the call, as the manager who called it. */}
         {!joined && (
-          <div className="absolute inset-0 grid place-items-center bg-black/55 p-4 backdrop-blur-[2px]">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]">
             <div className="glass flex max-h-[88%] w-full max-w-lg flex-col rounded-2xl p-5">
               <div className="min-h-0 overflow-y-auto pr-1">
                 {briefing ? (

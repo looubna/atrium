@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
-from dataclasses import asdict
-from datetime import datetime
+from dataclasses import asdict, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any
 
@@ -21,6 +22,8 @@ from app.platform.clients import clients
 from app.platform.firestore.paths import UserPaths
 from app.platform.plans import PlanId, PlanLimits, limits_for
 from app.platform.usage import Period, UsageService
+
+log = logging.getLogger(__name__)
 
 # Bump when the consent text shown in the app changes; users re-consent.
 CURRENT_CONSENT_VERSION = "2026-09-15"
@@ -78,7 +81,7 @@ class ConsentUpdate(BaseModel):
 
 class UsageView(BaseModel):
     plan: PlanId
-    limits: dict[str, int]
+    limits: dict[str, int | None]
     month: dict[str, int]
     today: dict[str, int]
 
@@ -106,6 +109,8 @@ async def ensure_user(user: AuthUser) -> dict[str, Any]:
         try:
             await ref.create(new)
             data = {**new, "createdAt": None}
+            # The owner's "new account" email alert (a Cloud Monitoring log alert) matches this line.
+            log.info("new account created")
         except AlreadyExists:
             data = (await ref.get()).to_dict() or {}
     if (data.get("deletion") or {}).get("status"):
@@ -113,10 +118,25 @@ async def ensure_user(user: AuthUser) -> dict[str, Any]:
     return data
 
 
+def effective_plan(data: dict[str, Any], now: datetime | None = None) -> PlanId:
+    """The plan the account is on now: its subscription, or a promo code's plan while it lasts."""
+    plan = PlanId(data["plan"]) if data.get("plan") in set(PlanId) else PlanId.FREE
+    until = data.get("promoUntil")
+    if plan is PlanId.FREE and isinstance(until, datetime) and until > (now or datetime.now(UTC)):
+        return PlanId(data["promoPlan"]) if data.get("promoPlan") in set(PlanId) else PlanId.PRO
+    return plan
+
+
 async def plan_limits(user: AuthUser) -> tuple[PlanId, PlanLimits]:
+    from app.platform.trial import trial_allowed
+
     data = await ensure_user(user)
-    plan = PlanId(data.get("plan", PlanId.FREE.value)) if data.get("plan") in set(PlanId) else PlanId.FREE
-    return plan, limits_for(plan, get_settings())
+    plan = effective_plan(data)
+    limits = limits_for(plan, get_settings())
+    # One trial per person: a free account whose trial check said no has no free minutes (plans are unaffected).
+    if limits.trial_minutes_total is not None and not trial_allowed(data):
+        limits = replace(limits, trial_minutes_total=0, live_minutes_month=0)
+    return plan, limits
 
 
 async def load_consents(uid: str) -> list[Consent]:
@@ -157,7 +177,7 @@ async def _profile(user: AuthUser, data: dict[str, Any]) -> Profile:
     return Profile(
         uid=user.uid,
         displayName=data.get("displayName"),
-        plan=PlanId(data["plan"]) if data.get("plan") in set(PlanId) else PlanId.FREE,
+        plan=effective_plan(data),
         createdAt=data.get("createdAt"),
         consents=await load_consents(user.uid),
         emailVerified=user.email_verified,

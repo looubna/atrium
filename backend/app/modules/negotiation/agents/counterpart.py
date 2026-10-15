@@ -107,7 +107,8 @@ class NegotiationLiveAgentFactory:
             lead_name=lead.name,
             # The user closes the meeting when they are done, like a real one.
             may_end_early=True,
-            # Colleague lines are replies: voiced at once. Replies come after 0.9 s of silence.
+            # Colleague lines are replies: voiced at once. Replies come after 1.2 s of silence (at 0.9 s
+            # they cut into the user's pauses mid-sentence).
             fast_panel_voices=True,
-            silence_duration_ms=900,
+            silence_duration_ms=1200,
         )

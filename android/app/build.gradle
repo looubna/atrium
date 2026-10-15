@@ -1,0 +1,79 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "com.atriumcoach.app"
+    ndkVersion = "28.2.13676358"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.atriumcoach.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 10
+        versionName "1.0.9"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // Release signing: the key and its passwords live in ~/.atrium (never in the repository). Keep a backup:
+    // every Galaxy Store update must be signed with this same key.
+    def signingProps = new Properties()
+    def signingFile = new File(System.getProperty("user.home"), ".atrium/keystore.properties")
+    if (signingFile.exists()) {
+        signingFile.withInputStream { signingProps.load(it) }
+    }
+    signingConfigs {
+        release {
+            if (signingFile.exists()) {
+                storeFile file(signingProps["storeFile"])
+                storePassword signingProps["storePassword"]
+                keyAlias signingProps["keyAlias"]
+                keyPassword signingProps["keyPassword"]
+            }
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingFile.exists() ? signingConfigs.release : null
+            // R8: smaller app, and the deobfuscation map ships inside the bundle for Play's crash reports.
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Native libraries' symbol tables go into the bundle too (Play's "debug symbols" warning).
+            ndk { debugSymbolLevel 'SYMBOL_TABLE' }
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+    // Samsung Galaxy Store purchases through RevenueCat (GalaxyPurchasesPlugin).
+    implementation "com.revenuecat.purchases:purchases:10.23.2"
+    implementation "com.revenuecat.purchases:purchases-store-galaxy:10.23.2"
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

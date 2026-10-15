@@ -39,7 +39,8 @@ def spaced(text: str, start: int = 0, step: int = 400) -> list[Word]:
 
 
 def test_every_drill_is_complete_and_consistent() -> None:
-    assert len(DRILLS) == 13
+    # The Practice Center's 13 drills, and the Park's 9-step Story Course.
+    assert len(DRILLS) == 22 and sum(d.startswith("story-") for d in DRILLS) == 9
     for drill in DRILLS.values():
         keys = {m.key for m in drill.metrics}
         assert drill.skills and all(s in SKILLS for s in drill.skills), drill.id
@@ -242,4 +243,4 @@ def test_overview_merges_the_catalog() -> None:
     assert [c["repeat"] for c in toyf_view["challenges"]] == [1, 2, 3]
     assert [s["label"] for s in toyf_view["skills"]] == ["Spontaneity", "Composure", "Structure"]
     assert {b["source"] for b in toyf_view["bests"]} == {"measured", "ai"}
-    assert len(view["achievements"]) == 5 and len(view["skills"]) == 8
+    assert len(view["achievements"]) == 6 and len(view["skills"]) == 9

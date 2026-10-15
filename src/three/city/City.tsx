@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
-import { LOCATIONS } from '@/data/locations'
+import { CATEGORIES, LOCATIONS } from '@/data/locations'
 import { InteractiveLocation } from '../buildings/InteractiveLocation'
+import { EXTERIORS } from '../buildings/registry'
 import { TalkVilleModel } from './TalkVilleModel'
 
 /**
@@ -15,6 +16,15 @@ export function City() {
       <Suspense fallback={null}>
         <TalkVilleModel />
       </Suspense>
+      {/* Places added after the Blender export stand on their own drawn exteriors. */}
+      {LOCATIONS.filter((l) => l.exterior).map((location) => {
+        const Exterior = EXTERIORS[location.kind]
+        return (
+          <group key={`${location.id}-exterior`} position={location.position} rotation={[0, location.rotation ?? 0, 0]}>
+            <Exterior accent={CATEGORIES[location.category].color} />
+          </group>
+        )
+      })}
       {LOCATIONS.map((location) => (
         <InteractiveLocation key={location.id} location={location} />
       ))}

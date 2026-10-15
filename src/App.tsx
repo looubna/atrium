@@ -7,6 +7,11 @@ import { Grade } from './components/navigation/Grade'
 import { InteriorHud } from './components/navigation/InteriorHud'
 import { MeetingVideo } from './components/navigation/MeetingVideo'
 import { NetworkingHall } from './components/navigation/NetworkingHall'
+import { BrainLab } from './components/navigation/BrainLab'
+import { Paywall } from './components/billing/Paywall'
+import { TrialCheck } from './components/billing/TrialCheck'
+import { BusStopTalk } from './components/navigation/BusStopTalk'
+import { CafeTalk } from './components/navigation/CafeTalk'
 import { ParkTalk } from './components/navigation/ParkTalk'
 import { SceneError } from './components/navigation/SceneError'
 import { TopBar } from './components/navigation/TopBar'
@@ -25,6 +30,7 @@ import { LanguageCenter } from './components/language/LanguageCenter'
 import { getLocation } from './data/locations'
 import { FeedbackDashboard } from './modules/interview/feedback/FeedbackDashboard'
 import { AccountSheet } from './platform/auth/AccountSheet'
+import { ConversationLoading } from './components/ConversationLoading'
 import { opensOwnScreen, useAppStore } from './state/useAppStore'
 import { Experience } from './three/Experience'
 
@@ -78,12 +84,18 @@ export default function App() {
       <InPersonInterview />
       <DrillStage />
       <ParkTalk />
+      <BrainLab />
+      <CafeTalk />
+      <BusStopTalk />
       <OralExam />
       <DebateRoom />
       <AdmissionCall />
       <LanguageCenter />
       <FaceWarmupStatus />
+      <ConversationLoading />
       <FeedbackDashboard />
+      <Paywall />
+      <TrialCheck />
       <AccountSheet />
       <Veil />
       <Boot />

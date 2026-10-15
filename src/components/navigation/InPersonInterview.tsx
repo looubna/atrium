@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PANEL_IN_PERSON, leadFor } from '@/data/interviewers'
-import { ARRIVAL, ONE_FACE_ROOM, PANEL_FACE_ROOM, RECEPTION_STILL, ROOM_PHOTO, ROOM_TAKES, type Orientation } from '@/data/inPersonMedia'
+import { ARRIVAL, ONE_FACE_ROOM, PANEL_FACE_ROOM, RECEPTION_STILL, type Orientation } from '@/data/inPersonMedia'
 import type { SessionSetup } from '@/data/practice'
 import { useCamera } from '@/lib/useCamera'
 import { cn } from '@/lib/utils'
 import { CodePane } from '@/modules/interview/live/CodePane'
-import { CUT_BACK_MS, takeFor, type Speaker } from '@/modules/interview/live/shots'
+import { CUT_BACK_MS, type Speaker } from '@/modules/interview/live/shots'
 import { useInterviewRoom } from '@/modules/interview/live/useInterviewRoom'
 import type { LiveInterviewControls } from '@/modules/interview/live/useLiveInterview'
 import { isLiveInPerson, useAppStore } from '@/state/useAppStore'
@@ -13,8 +13,8 @@ import { Button } from '../ui/Button'
 import { IconCode } from '../ui/Icon'
 import { LeaveArrow, LiveOverlay, SceneCaption } from './LivePanels'
 import { AvatarTile } from './AvatarTile'
-import { FramingHint } from './FramingHint'
-import { RoomTake } from './RoomTake'
+import { RotateHint } from './RotateHint'
+import { CameraCheck } from './CameraCheck'
 
 /**
  * A live interview in person, the way a visit goes: the firm's glass doors, a tap of the pass,
@@ -82,7 +82,9 @@ export function inPersonHere(state: {
   selectedId: string | null
 }): { session: SessionSetup; sessionId: string; zone: 'door' | 'reception' | 'meeting' } | null {
   const { view, interiorZone, session, selectedId } = state
-  if (view !== 'interior' || !session || session.locationId !== selectedId || !isLiveInPerson(session)) return null
+  // Still on screen while the building fades out ('exiting'): otherwise the bare 3D room shows
+  // for the length of the fade after the interview ends.
+  if ((view !== 'interior' && view !== 'exiting') || !session || session.locationId !== selectedId || !isLiveInPerson(session)) return null
   if (interiorZone !== 'door' && interiorZone !== 'reception' && interiorZone !== 'meeting') return null
   return { session, sessionId: session.interview!.sessionId!, zone: interiorZone }
 }
@@ -120,15 +122,7 @@ export function InPersonRoom({
   // Everyone else at the table, whether or not they ever ask anything: the one who sits in and
   // takes notes still says hello, and is still named the first time the candidate hears her.
   const table = panel ? PANEL_IN_PERSON : []
-  const layout = panel ? 'panel' : 'one'
-  const roomPhoto = ROOM_PHOTO[layout][orientation]
-  const takes = ROOM_TAKES[layout][orientation]
   const arrivalMedia = ARRIVAL[orientation]
-  // Takes that turned out not to be filmed: each falls back to the room listening, and that to
-  // the photograph, so a room with no footage at all still works.
-  const [missing, setMissing] = useState<string[]>([])
-  const filmed = useCallback((src: string) => !missing.includes(src), [missing])
-  const onMissing = useCallback((src: string) => setMissing((gone) => (gone.includes(src) ? gone : [...gone, src])), [])
 
   // From the pass on, the camera measures presence on the device (the browser shows it's on).
   const [started, setStarted] = useState(false)
@@ -146,7 +140,7 @@ export function InPersonRoom({
   // The call connects on the way in; the interviewer opens the moment the candidate sits down.
   // The interviewers are live, lip-synced faces: one to one, Evelyn at her desk; as a panel, the
   // three of them at the table, one face that paints whoever is speaking.
-  const room = useInterviewRoom({ sessionId, camera: camera.stream, openWhen: seated, tracker })
+  const room = useInterviewRoom({ sessionId, camera: camera.stream, openWhen: seated, loaderAfterOpen: true, tracker })
   const { live, liveActive, avatar } = room
   // Their room and their faces, unless there is no face today: then the filmed room, voice only.
   const faceRoom = !room.avatarUnavailable && !room.avatarFailed
@@ -210,13 +204,6 @@ export function InPersonRoom({
     return () => setSceneCovered(false)
   }, [setSceneCovered])
 
-  // Which take is running, and whose name goes under it. Three people at a table are three
-  // strangers until they are named, and the candidate is too far away to read a name plate.
-  const take = takeFor(speaker, table.map((m) => m.name))
-  const wanted =
-    take.kind === 'lead' ? takes.lead : take.kind === 'colleague' ? takes.colleagues[take.index] : takes.listen
-  // A take nobody filmed leaves the room listening rather than moving the wrong mouth.
-  const running = wanted && filmed(wanted) ? wanted : takes.listen
   const speaking = speaker?.kind === 'lead' ? lead.name : speaker?.kind === 'colleague' ? speaker.name : null
   const leadFirst = lead.name.split(' ')[0]
   const leave = seated && liveActive ? live.end : leaveInterior
@@ -292,40 +279,30 @@ export function InPersonRoom({
         {/* The room from the candidate's chair: the photograph, and over it the one take whose
             person has the floor. Every take is that same frame, so there is no cut to see and
             nothing is drawn into the picture that was not filmed in it. */}
-        {faceRoom ? (
-          <>
-            <img src={faceMedia.still} alt="" className="absolute inset-0 size-full object-cover" />
-            <video
-              src={faceMedia.loop}
-              poster={faceMedia.still}
-              autoPlay
-              loop
-              muted
-              playsInline
-              disablePictureInPicture
-              className="absolute inset-0 size-full object-cover"
-            />
-            {avatar && (
-              <AvatarTile
-                variant="closeup"
-                renderer={avatar.renderer}
-                name={avatar.name}
-                role={avatar.role}
-                speaking={live.state.interviewerSpeaking}
-                shown
-                onLive={room.setFaceOnScreen}
-                onFailed={room.onAvatarFailed}
-                onEnded={room.onFaceEnded}
-              />
-            )}
-          </>
-        ) : (
-          <>
-            <img src={roomPhoto} alt="" className="absolute inset-0 size-full object-cover" />
-            {[takes.listen, takes.lead, ...takes.colleagues].filter(filmed).map((src) => (
-              <RoomTake key={src} src={src} poster={roomPhoto} running={src === running} onMissing={onMissing} />
-            ))}
-          </>
+        {/* The room is always the filmed scene the live face is made from; the face joins over it. */}
+        <img src={faceMedia.still} alt="" className="absolute inset-0 size-full object-cover" />
+        <video
+          src={faceMedia.loop}
+          poster={faceMedia.still}
+          autoPlay
+          loop
+          muted
+          playsInline
+          disablePictureInPicture
+          className="absolute inset-0 size-full object-cover"
+        />
+        {faceRoom && avatar && (
+          <AvatarTile
+            variant="closeup"
+            renderer={avatar.renderer}
+            name={avatar.name}
+            role={avatar.role}
+            speaking={live.state.interviewerSpeaking}
+            shown
+            onLive={room.setFaceOnScreen}
+            onFailed={room.onAvatarFailed}
+            onEnded={room.onFaceEnded}
+          />
         )}
         {introducing && (
           <div className="anim-fade pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/70 to-transparent px-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] pt-10">
@@ -363,7 +340,13 @@ export function InPersonRoom({
         </div>
       )}
 
-      <FramingHint framing={room.framing} />
+      {/* Your own camera only until you are in frame and talking: in a room, nobody watches themselves. */}
+      {seated && liveActive && (
+        <CameraCheck stream={camera.stream} framing={room.framingStatus} standing={false} micLevel={live.state.micLevel} />
+      )}
+
+      {/* The panel is one wide shot: upright, only the middle seat fits. */}
+      {seated && panel && <RotateHint who="the whole panel" />}
 
       {(seated || phase === 'failed') && (
         <LiveOverlay

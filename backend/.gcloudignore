@@ -1,0 +1,13 @@
+# What `gcloud builds submit` uploads: only what the Dockerfile needs (it copies pyproject, uv.lock and app/).
+# Never the local test data (.local-objects holds local recordings), the venv, tests or env files.
+.local-objects/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+**/__pycache__/
+tests/
+evals/
+scripts/
+.env*
+*.log

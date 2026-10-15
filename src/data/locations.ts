@@ -62,22 +62,23 @@ export const LOCATIONS: Location[] = [
     arrival: 'theater',
   },
   {
-    id: 'restaurant',
-    name: 'Restaurant',
-    shortName: 'Restaurant',
-    markerColor: '#f0508f',
-    icon: 'dining',
-    tagline: 'Where the client dinner happens. Networking with cutlery.',
-    category: 'career',
-    kind: 'restaurant',
+    id: 'brain-lab',
+    name: 'Brain Lab',
+    shortName: 'Brain Lab',
+    markerColor: '#2cb8c4',
+    icon: 'brain',
+    tagline: 'Understand your brain. Change how you speak, feel and act.',
+    category: 'social',
+    kind: 'lab',
+    // Where the waterfront restaurant stood (cut out of the model: CUTOUTS in TalkVilleModel).
     position: [23.5, 0, -24.5],
-    // Faces the water, with its deck out over the bay.
     rotation: Math.PI / 2,
-    footprint: [6, 7],
-    labelHeight: 14,
+    footprint: [12, 11],
+    labelHeight: 15,
     focus: { offset: [14, 14, 34] },
-    door: [0, 0, 4],
-    practiceAreas: ['Networking', 'Client Dinner', 'Difficult Conversations'],
+    door: [0, 0, 6],
+    practiceAreas: ['Brain consultation'],
+    exterior: true,
   },
   {
     id: 'park',
@@ -98,11 +99,11 @@ export const LOCATIONS: Location[] = [
   },
   {
     id: 'cafe',
-    name: 'Café',
+    name: 'Café & Restaurant',
     shortName: 'Café',
     markerColor: '#ec5a45',
     icon: 'coffee',
-    tagline: 'Warm, noisy, forgiving. The easiest place to start a conversation.',
+    tagline: 'Coffee, dinner, and every conversation in between.',
     category: 'social',
     kind: 'cafe',
     position: [18.5, 0, 2],
@@ -111,9 +112,10 @@ export const LOCATIONS: Location[] = [
     // Just above the roof: any higher and it collides with the Shopping Mall
     // label in the overview.
     labelHeight: 10,
-    focus: { offset: [12, 13, 32] },
+    // From the north-west over the terrace, the bay behind: the old south view was blocked by the tower.
+    focus: { offset: [-20, 14, 20] },
     door: [0, 0, 8],
-    practiceAreas: ['Starting Conversations', 'Small Talk', 'Everyday Communication'],
+    practiceAreas: ['Starting Conversations', 'Everyday Communication'],
   },
   {
     id: 'mall',
@@ -186,7 +188,7 @@ export const LOCATIONS: Location[] = [
     // from across the road is blocked by the red-roofed house next door.
     focus: { offset: [14, 12, 10] },
     door: [0, 0, 2],
-    practiceAreas: ['Small Talk', 'Starting Conversations'],
+    practiceAreas: ['Small Talk', 'Help & Boundaries'],
   },
 ]
 

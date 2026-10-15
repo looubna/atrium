@@ -5,6 +5,7 @@
  */
 
 import type { ExamStyle } from '@/modules/exam/api'
+import { DRILLS, STORY_COURSE } from './drills'
 import type {
   DebateDifficulty,
   DebateFocus,
@@ -38,6 +39,9 @@ export interface PracticeFormat {
     | 'exam'
     | 'debate'
     | 'presentation'
+    | 'brainlab'
+    | 'cafe'
+    | 'busstop'
 }
 
 export type InterviewType = 'recruiter' | 'behavioral' | 'coding' | 'technical' | 'hiring-manager' | 'case'
@@ -238,18 +242,22 @@ export type MeetingBriefing = NegotiationBriefing & {
   points?: string[]
 }
 
-export type PresentationFormat = 'small-room' | 'large-audience' | 'virtual' | 'academic'
+export type PresentationFormat = 'small-room' | 'large-audience' | 'virtual' | 'academic' | 'defence'
 
 /** The presentation a menu entry sets up: the business formats by their id, the university's by name. */
 export const presentationFormatOf = (format: PracticeFormat): PresentationFormat =>
-  format.id === 'academic-presentation' ? 'academic' : (format.id as PresentationFormat)
+  format.id === 'academic-presentation'
+    ? 'academic'
+    : format.id === 'thesis-defence'
+      ? 'defence'
+      : (format.id as PresentationFormat)
 
 /**
  * Presentations judged standing at a lectern, where posture and gestures are part of the analysis:
  * the camera check asks for the whole body there.
  */
 export const presentsStanding = (format: PresentationFormat): boolean =>
-  format === 'academic' || format === 'large-audience'
+  format === 'academic' || format === 'large-audience' || format === 'defence'
 
 export interface PresentationSetup {
   format: PresentationFormat
@@ -417,9 +425,10 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
       id: 'thesis-defence',
       label: 'Thesis defence',
       note: 'At the lectern of a lecture hall, facing your committee and an audience',
-      destination: 'theater',
-      // The committee asks the questions: nobody raises a hand.
-      kind: 'defence',
+      // A live presentation (`PresentationCall`) in the lecture hall: present your thesis, then the
+      // committee at the front table (the chair and two examiners) questions you on it.
+      destination: 'call',
+      kind: 'presentation',
     },
   ],
   // The other university sessions also take place in the lecture hall, its only room.
@@ -503,6 +512,61 @@ export const PRACTICE_FORMATS: Record<string, PracticeFormat[]> = {
       // A video call with your team, like Zoom (LeadershipCall).
       destination: 'call',
       kind: 'leadership',
+    },
+  ],
+  // The park's Story Course: each step a drill round (DrillStage), unlocked in order (PracticePicker).
+  Storytelling: STORY_COURSE.map((id, i) => ({
+    id,
+    label: i === STORY_COURSE.length - 1 ? `★ ${DRILLS[id].title}` : `${i + 1}. ${DRILLS[id].title}`,
+    note: DRILLS[id].goal,
+    destination: 'drill' as const,
+  })),
+  // The Brain Lab: a live consultation with a neuroscientist coach (BrainLab, on the 'talk' screen).
+  'Brain consultation': [
+    {
+      id: 'brain-consultation',
+      label: 'Consultation with Dr. Maya Rahimi',
+      note: 'What happens in your brain, and a plan that works',
+      destination: 'talk',
+      kind: 'brainlab',
+    },
+  ],
+  // The Café & Restaurant: a live conversation at a table (CafeTalk); the situation is picked there.
+  'Starting Conversations': [
+    {
+      id: 'cafe-starting',
+      label: 'Start a conversation',
+      note: 'A stranger, a new colleague, someone you met once',
+      destination: 'talk',
+      kind: 'cafe',
+    },
+  ],
+  'Everyday Communication': [
+    {
+      id: 'cafe-everyday',
+      label: 'Everyday conversations',
+      note: 'Coffee with someone you admire, say no, disagree, a client dinner',
+      destination: 'talk',
+      kind: 'cafe',
+    },
+  ],
+  // The Bus Stop: a short live conversation while waiting (BusStopTalk); the situation is picked there.
+  'Small Talk': [
+    {
+      id: 'busstop-smalltalk',
+      label: 'Small talk at the stop',
+      note: 'The bus is late, a name you forgot, your bus arriving',
+      destination: 'talk',
+      kind: 'busstop',
+    },
+  ],
+  'Help & Boundaries': [
+    {
+      id: 'busstop-boundaries',
+      label: 'Help & boundaries',
+      note: 'Ask a stranger for help, a pushy stranger, a queue jumper',
+      destination: 'talk',
+      kind: 'busstop',
     },
   ],
   // The park: a face-to-face conversation on a bench (ParkTalk), with a woman or a man.
@@ -706,6 +770,14 @@ export function showsLiveFace(format: PracticeFormat): boolean {
     format.kind === 'exam' ||
     format.kind === 'debate' ||
     format.kind === 'networking' ||
-    format.kind === 'admission'
+    format.kind === 'admission' ||
+    // The park: the friend on the bench is lip-synced live.
+    format.kind === 'emotional' ||
+    // The Brain Lab's neuroscientist.
+    format.kind === 'brainlab' ||
+    // The Café & Restaurant's people.
+    format.kind === 'cafe' ||
+    // The Bus Stop's people.
+    format.kind === 'busstop'
   )
 }

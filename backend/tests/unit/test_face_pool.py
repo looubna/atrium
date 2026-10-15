@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 
+from app.platform.faces import pool as pool_module
 from app.platform.faces.pool import CACHE_S, ZONE_COOLDOWN_S, FacePool, FaceVm, FixedServer, parse_vms
 
 A = FaceVm("us-central1-a", "face-a")
@@ -44,11 +45,21 @@ class Clock:
         self.now += seconds
 
 
-def pool(compute: FakeCompute, healthy: bool = True, clock: Clock | None = None) -> FacePool:
-    async def health(url: str) -> bool:
-        return healthy
+def pool(
+    compute: FakeCompute,
+    healthy: bool = True,
+    clock: Clock | None = None,
+    sessions: dict[str, int] | None = None,
+) -> FacePool:
+    """`sessions`: open conversations by server address (none by default)."""
+
+    async def health(url: str) -> int | None:
+        return (sessions or {}).get(url, 0) if healthy else None
 
     return FacePool([A, B], port=8010, compute=compute, health=health, clock=clock or Clock())
+
+
+URL_A, URL_B = "http://10.0.0.1:8010", "http://10.0.0.2:8010"
 
 
 def test_vms_are_listed_in_failover_order() -> None:
@@ -69,6 +80,14 @@ async def test_a_running_server_is_loading_until_its_health_answers() -> None:
     assert (await pool(FakeCompute(a="RUNNING"), healthy=False).warm()).state == "loading"
     ready = await pool(FakeCompute(a="RUNNING")).warm()
     assert (ready.state, ready.url) == ("ready", "http://10.0.0.1:8010")
+
+
+async def test_phones_reach_the_server_over_https_by_name() -> None:
+    async def health(url: str) -> int | None:
+        return 0
+
+    https = FacePool([A, B], port=8010, compute=FakeCompute(a="RUNNING"), health=health, clock=Clock(), https=True)
+    assert await https.ready_url() == "https://10-0-0-1.sslip.io"
 
 
 async def test_the_address_is_never_told_to_the_page() -> None:
@@ -116,6 +135,57 @@ async def test_a_server_idling_off_is_not_started_until_it_has_stopped() -> None
     compute = FakeCompute(a="STOPPING")
     assert (await pool(compute).warm()).state == "starting"
     assert compute.started == []
+
+
+async def test_a_free_running_server_is_given_before_a_busy_one() -> None:
+    faces = pool(FakeCompute(a="RUNNING", b="RUNNING"), sessions={URL_A: 1})
+    assert (await faces.warm()).url == URL_B
+
+
+async def test_when_every_server_is_busy_the_next_is_started() -> None:
+    compute = FakeCompute(a="RUNNING")
+    assert (await pool(compute, sessions={URL_A: 1}).warm()).state == "starting"
+    assert compute.started == [B]
+
+
+async def test_while_the_next_boots_newcomers_wait_for_it() -> None:
+    compute = FakeCompute(a="RUNNING", b="STAGING")
+    assert (await pool(compute, sessions={URL_A: 1}).warm()).state == "starting"
+    assert compute.started == []
+
+
+async def test_with_no_gpu_to_start_the_busy_server_is_shared() -> None:
+    compute = FakeCompute(a="RUNNING")
+
+    async def over_quota(vm: FaceVm) -> str:
+        compute.started.append(vm)
+        raise httpx.HTTPStatusError("quota", request=httpx.Request("POST", "x"), response=httpx.Response(403))
+
+    compute.start = over_quota  # type: ignore[method-assign]
+    shared = await pool(compute, sessions={URL_A: 1}).warm()
+    assert (shared.state, shared.url) == ("ready", URL_A)
+    assert compute.started == [B]
+
+
+async def test_a_start_that_fails_later_falls_back_to_sharing() -> None:
+    compute, clock = FakeCompute(a="RUNNING"), Clock()
+    faces = pool(compute, clock=clock, sessions={URL_A: 1})
+    assert (await faces.warm()).state == "starting"
+    compute.ops["op-1"] = {"status": "DONE", "error": {"errors": [{"code": "QUOTA_EXCEEDED"}]}}
+    clock.tick()
+    assert (await faces.warm()).url == URL_A
+
+
+async def test_no_more_than_max_running_are_started(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pool_module, "MAX_RUNNING", 1)
+    compute = FakeCompute(a="RUNNING")
+    assert (await pool(compute, sessions={URL_A: 1}).warm()).url == URL_A
+    assert compute.started == []
+
+
+async def test_the_least_busy_is_shared_when_all_are_full() -> None:
+    faces = pool(FakeCompute(a="RUNNING", b="RUNNING"), sessions={URL_A: 3, URL_B: 1})
+    assert (await faces.warm()).url == URL_B
 
 
 @pytest.mark.parametrize(("url", "state"), [("http://face:8010/", "ready"), ("", "unavailable")])

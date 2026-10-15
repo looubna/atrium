@@ -380,6 +380,10 @@ export type FaceModule =
   | 'negotiation'
   | 'meeting'
   | 'presentation'
+  | 'emotional'
+  | 'brainlab'
+  | 'cafe'
+  | 'busstop'
 
 /**
  * Asks for a face for this session. The server picks the person and holds the

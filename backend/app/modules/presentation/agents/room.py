@@ -32,6 +32,14 @@ _WHERE: dict[Format, str] = {
         "Questions are scholarly: the research question, method, evidence, related work, limitations and what the "
         "work contributes"
     ),
+    Format.DEFENCE: (
+        "at a thesis defence in a university lecture hall: the three of you are the candidate's thesis committee at "
+        "the front table, you as the chair and the other two as examiners, with an audience of students and faculty "
+        "behind you. After the talk the committee examines the candidate, rigorously but fairly, as a real defence "
+        "does: the research question and why it matters, the contribution beyond prior work, the method and its "
+        "choices, the evidence and whether it supports the conclusions, limitations and threats to validity, and "
+        "future work. Follow up when an answer is vague, and ask the candidate to justify their choices"
+    ),
 }
 
 

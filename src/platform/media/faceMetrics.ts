@@ -270,6 +270,19 @@ export class FaceTracker {
     )
   }
 
+  /**
+   * The framing as far as it is known: a problem, 'ok' once enough recent samples have actually seen
+   * the face and the body the setting needs, or null while there is not enough to tell (just started,
+   * or body tracking unavailable). Unlike `framing()`, null never means "fine".
+   */
+  framingStatus(): Framing | 'ok' | null {
+    const problem = this.framing()
+    if (problem) return problem
+    const faces = this.recent
+    const faceSeen = faces.length >= 4 && faces.filter((s) => s.present).length >= faces.length / 2
+    return faceSeen && this.recentBodies.length >= 3 ? 'ok' : null
+  }
+
   /** Over roughly the last two seconds: is a face visible, the share looking at the camera, and smile strength. */
   live(): { present: boolean; eye: number; smile: number } | null {
     if (!this.recent.length) return null

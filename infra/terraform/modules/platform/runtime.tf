@@ -81,6 +81,24 @@ resource "google_secret_manager_secret_iam_member" "livetalking_secret" {
 }
 
 
+# Paid plans (RevenueCat): the secret REST API key and the webhook's shared secret live in Secret Manager
+# as `revenuecat-api-key` and `revenuecat-webhook-secret`, created and rotated outside Terraform (their
+# values never pass through Terraform state). Only the API reads them. Off until revenuecat_enabled.
+locals {
+  billing_secrets = var.revenuecat_enabled ? {
+    "revenuecat-api-key"        = "REVENUECAT_API_KEY"
+    "revenuecat-webhook-secret" = "REVENUECAT_WEBHOOK_SECRET"
+  } : {}
+}
+
+resource "google_secret_manager_secret_iam_member" "billing" {
+  for_each  = local.billing_secrets
+  project   = var.project_id
+  secret_id = each.key
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.api.member
+}
+
 resource "google_cloud_tasks_queue" "queues" {
   for_each = {
     processing  = { concurrent = 20, attempts = 6 }
@@ -281,6 +299,18 @@ resource "google_cloud_run_v2_service" "api" {
           value_source {
             secret_key_ref {
               secret  = env.value.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = local.billing_secrets
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = env.key
               version = "latest"
             }
           }

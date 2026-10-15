@@ -10,6 +10,11 @@ Nothing here stops a VM. The VM does that itself once nobody has used it for a w
 still streaming, and it must stop even if this API is redeployed or down. Polling `warm` holds
 it up: every poll pings its health with a signed hold token.
 
+One L4 lip-syncs one conversation smoothly, so each VM is given one conversation at a time
+(`/atrium/health` reports how many it has). When every running VM is busy, the next stopped one
+is started, up to `MAX_RUNNING`; if none can start (out of GPUs, or the project's GPU quota), the
+newcomer shares the least busy VM rather than going without a face.
+
 GPUs are not guaranteed to exist when asked for (a zone can be out of L4s), so the VMs are
 listed in failover order and a zone whose start failed is skipped for a while. With no VM able
 to start the answer is "unavailable", and the session runs on its voice alone.
@@ -36,6 +41,10 @@ ZONE_COOLDOWN_S = 600.0
 #: How long one answer stands for every candidate polling at once.
 CACHE_S = 2.0
 HEALTH_TIMEOUT_S = 2.5
+#: Conversations one VM is given before another is started (one L4 keeps one smooth).
+CAPACITY = 1
+#: VMs running or starting at once, at most (also bounded by the project's GPU quota).
+MAX_RUNNING = 3
 
 State = Literal["ready", "starting", "loading", "unavailable"]
 _STARTING = {"PROVISIONING", "STAGING", "REPAIRING"}
@@ -79,7 +88,9 @@ class Compute(Protocol):
 
 
 class Health(Protocol):
-    async def __call__(self, url: str) -> bool: ...
+    async def __call__(self, url: str) -> int | None:
+        """The server's open conversations, or None while it is not up."""
+        ...
 
 
 class RestCompute:
@@ -131,13 +142,16 @@ class HttpHealth:
         self.secret = secret
         self._http = httpx.AsyncClient(timeout=HEALTH_TIMEOUT_S)
 
-    async def __call__(self, url: str) -> bool:
+    async def __call__(self, url: str) -> int | None:
         params = {"hold": livetalking.sign(self.secret, livetalking.HOLD)} if self.secret else {}
         try:
             response = await self._http.get(f"{url}/atrium/health", params=params)
-            return response.status_code == 200 and bool(response.json().get("ok"))
-        except (httpx.HTTPError, ValueError):
-            return False
+            body = response.json()
+            if response.status_code != 200 or not body.get("ok"):
+                return None
+            return int(body.get("sessions") or 0)
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            return None
 
 
 def _external_ip(info: dict[str, Any]) -> str:
@@ -166,9 +180,11 @@ class FacePool:
         compute: Compute,
         health: Health,
         clock: Any = time.time,
+        https: bool = False,
     ) -> None:
         self.vms = vms
         self.port = port
+        self.https = https
         self.compute = compute
         self.health = health
         self.clock = clock
@@ -201,23 +217,39 @@ class FacePool:
             if isinstance(info, dict):
                 infos[vm] = info
 
-        # One running is all it takes: it is either serving, or loading its model.
+        # A running VM with room is the answer. Asked in failover order and no further than the
+        # first with room, so the hold token keeps up only the VMs actually wanted.
+        busy: tuple[int, Warmth] | None = None  # the least busy VM that is up, to share if need be
+        loading: Warmth | None = None
+        active = 0
         for vm, info in infos.items():
             if info.get("status") != "RUNNING" or not _external_ip(info):
                 continue
+            active += 1
             self._pending.pop(vm, None)
-            url = f"http://{_external_ip(info)}:{self.port}"
+            ip = _external_ip(info)
+            url = f"https://{ip.replace('.', '-')}.sslip.io" if self.https else f"http://{ip}:{self.port}"
             elapsed = _since(info.get("lastStartTimestamp"), now) or 0.0
-            if await self.health(url):
+            sessions = await self.health(url)
+            if sessions is None:
+                loading = loading or Warmth("loading", elapsed_s=max(elapsed, EXPECTED_BOOT_S))
+            elif sessions < CAPACITY:
                 return Warmth("ready", url=url, elapsed_s=elapsed)
-            return Warmth("loading", elapsed_s=max(elapsed, EXPECTED_BOOT_S))
+            elif busy is None or sessions < busy[0]:
+                busy = (sessions, Warmth("ready", url=url, elapsed_s=elapsed))
 
+        # One is loading its model or booting: it is the next one free.
+        if loading:
+            return loading
         for vm, info in infos.items():
             if info.get("status") in _STARTING:
                 return Warmth("starting", elapsed_s=self._elapsed(vm, now))
-        # Idling off just as someone arrived: it is started again once it has stopped.
-        if any(info.get("status") in _STOPPING for info in infos.values()):
-            return Warmth("starting", elapsed_s=0.0)
+        if busy is None:
+            # Idling off just as someone arrived: it is started again once it has stopped.
+            if any(info.get("status") in _STOPPING for info in infos.values()):
+                return Warmth("starting", elapsed_s=0.0)
+        elif active >= MAX_RUNNING:
+            return busy[1]
 
         for vm in self.vms:
             if vm not in infos or infos[vm].get("status") not in _STOPPED:
@@ -244,11 +276,119 @@ class FacePool:
                 continue
             return Warmth("starting", elapsed_s=0.0)
 
-        return Warmth("unavailable")
+        return busy[1] if busy else Warmth("unavailable")
 
     def _elapsed(self, vm: FaceVm, now: float) -> float:
         pending = self._pending.get(vm)
         return now - pending[1] if pending else 0.0
+
+
+#: Cloud Run: a cold start (instance, image, model) measured at about this; shown as progress.
+CLOUD_RUN_EXPECTED_S = 60.0
+#: Cloud Run not up after this long (no GPU quota, an outage): the VMs take over for a while.
+CLOUD_RUN_GIVE_UP_S = 120.0
+#: How long the VMs keep the job before Cloud Run is asked again.
+CLOUD_RUN_RETRY_S = 300.0
+
+
+class CloudRunFaces:
+    """The face server on Cloud Run with a GPU: an instance starts when asked for, and none run idle.
+
+    Nothing is started here explicitly: asking `/atrium/health` is a request, and a request is what
+    makes Cloud Run start an instance (and keep one up while the page polls). One conversation per
+    instance (concurrency 1), so while one is busy the next ask lands on a fresh instance.
+    """
+
+    def __init__(self, url: str, *, health: Health, clock: Any = time.time) -> None:
+        self.url = url.rstrip("/")
+        self.health = health
+        self.clock = clock
+        self._since: float | None = None  # when this cold start began (first unanswered ask)
+        self._gave_up_at: float | None = None
+
+    @property
+    def gave_up(self) -> bool:
+        """True while the VMs should be used instead (Cloud Run did not come up in time)."""
+        if self._gave_up_at is None:
+            return False
+        if self.clock() - self._gave_up_at >= CLOUD_RUN_RETRY_S:
+            self._gave_up_at = None
+            self._since = None
+            return False
+        return True
+
+    async def warm(self) -> Warmth:
+        now = self.clock()
+        if self.gave_up:
+            return Warmth("unavailable")
+        if await self.health(self.url) is not None:
+            elapsed = now - self._since if self._since is not None else 0.0
+            self._since = None
+            return Warmth("ready", url=self.url, elapsed_s=elapsed, expected_s=CLOUD_RUN_EXPECTED_S)
+        if self._since is None:
+            self._since = now
+        elapsed = now - self._since
+        if elapsed >= CLOUD_RUN_GIVE_UP_S:
+            self._gave_up_at = now
+            return Warmth("unavailable")
+        return Warmth("starting", elapsed_s=elapsed, expected_s=CLOUD_RUN_EXPECTED_S)
+
+    async def ready_url(self) -> str:
+        warmth = await self.warm()
+        return warmth.url if warmth.state == "ready" else ""
+
+
+#: A region not ready after this long (all its GPUs busy, or a slow cold start) wakes the next region as
+#: well. A normal cold start takes ~90 s (measured 2026-10-09), so a shorter wait booted a second GPU in
+#: the next region for nearly every first visitor; this stays under CLOUD_RUN_GIVE_UP_S.
+REGION_SPILL_S = 100.0
+
+
+class CloudRunRegions:
+    """The face server in several Cloud Run regions, nearest/cheapest first.
+
+    The first region is asked alone. Only when it has not had a face ready for `REGION_SPILL_S` (its
+    instances are all in conversations, or it is still cold-starting) is the next one woken too, and
+    whichever is ready first is used, so a busy region never leaves a candidate without a face and an
+    idle second region costs nothing.
+    """
+
+    def __init__(self, regions: list[CloudRunFaces]) -> None:
+        self.regions = regions
+
+    async def warm(self) -> Warmth:
+        waiting: Warmth | None = None
+        for region in self.regions:
+            warmth = await region.warm()
+            if warmth.state == "ready":
+                return warmth
+            if warmth.state != "unavailable":
+                waiting = waiting or warmth
+                if warmth.elapsed_s < REGION_SPILL_S:
+                    break  # give this region its chance before waking the next one
+        return waiting or Warmth("unavailable")
+
+    async def ready_url(self) -> str:
+        warmth = await self.warm()
+        return warmth.url if warmth.state == "ready" else ""
+
+
+class FirstAvailable:
+    """Cloud Run first; the VM pool only when Cloud Run cannot come up (and it is configured)."""
+
+    def __init__(self, primary: CloudRunFaces | CloudRunRegions, backup: FacePool | None) -> None:
+        self.primary = primary
+        self.backup = backup
+
+    async def warm(self) -> Warmth:
+        warmth = await self.primary.warm()
+        if warmth.state != "unavailable" or self.backup is None:
+            return warmth
+        return await self.backup.warm()
+
+    async def ready_url(self) -> str:
+        warmth = await self.warm()
+        return warmth.url if warmth.state == "ready" else ""
 
 
 class FixedServer:

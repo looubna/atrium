@@ -72,13 +72,13 @@ async def test_factory_waits_for_a_leader_and_opens_for_a_participant() -> None:
     factory = MeetingLiveAgentFactory()
     led = await factory.build(uid="u", session_id="s", session={"context": {
         "role": "leader", "group": True, "plan": _plan(Role.LEADER).to_doc()}}, resumed=False)
-    assert "the user runs this meeting and will open it" in led.opening_message and led.silence_duration_ms == 1100
+    assert "the user runs this meeting and will open it" in led.opening_message and led.silence_duration_ms == 1400
     assert [m.name for m in led.panel] == ["Priya Raman", "Kevin Zhou"]
     assert "never say stage directions" in led.system_instruction
     joined = await factory.build(uid="u", session_id="s", session={"context": {
         "role": "participant", "mode": "in_person", "topic": "Budget"}}, resumed=False)
     assert "open the meeting" in joined.opening_message and joined.lead_name == "Claire Donovan"
-    assert joined.silence_duration_ms == 900
+    assert joined.silence_duration_ms == 1200
 
 
 def test_briefing_shows_the_users_side_only() -> None:

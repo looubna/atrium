@@ -36,6 +36,11 @@ export interface RoundFeedback {
   strengths: CoachPoint[]
   improvements: CoachPoint[]
   nextTry: string
+  /**
+   * Story Course: the key part of the user's own story, retold by the coach with this step's technique,
+   * with how to say it (cues on exact phrases of `text`; "..." marks a pause).
+   */
+  model?: { text: string; why: string; notes: { phrase: string; cue: string }[] } | null
 }
 
 export interface RoundAwards {
@@ -89,6 +94,18 @@ export interface PracticeProgress {
   achievements: { id: string; title: string; description: string; earnedOn: string | null }[]
   skills: { id: string; label: string; rounds: number }[]
   drills: Record<string, DrillProgress>
+  /** The Story Course: the last story told (not a retelling), which Tell It Again retells. */
+  story?: { lastSeed: string | null; lastScore: number | null }
+}
+
+/**
+ * A story's language arc over five equal parts, each curve relative to its own average (1 = average):
+ * scene-setting, plot progression and cognitive tension (backend practice/story.py).
+ */
+export interface StoryArc {
+  staging: number[]
+  progression: number[]
+  tension: number[]
 }
 
 export interface RoundResult {
@@ -103,6 +120,8 @@ export interface RoundResult {
   feedback: RoundFeedback | null
   awards: RoundAwards
   progress: PracticeProgress
+  /** Story Course rounds only. */
+  arc?: StoryArc | null
 }
 
 /** The user's calendar day (YYYY-MM-DD), for the streak. */
@@ -170,3 +189,13 @@ export function formatMetric(value: number | null, unit: string): string {
 
 /** Prep time for Think on Your Feet at each challenge level. */
 export const THINK_PREP_SECONDS: Record<number, number> = { 1: 15, 2: 10, 3: 7 }
+
+/** The coach's retelling of a Story Course round, read aloud by a storyteller voice. */
+export async function storyExampleAudio(attemptId: string, voice: 'warm' | 'deep' = 'warm'): Promise<Blob> {
+  const { audio, contentType } = await api<{ audio: string; contentType: string }>(
+    `/practice/attempts/${attemptId}/example-audio?voice=${voice}`,
+    { method: 'POST', timeoutMs: 90_000 },
+  )
+  const bytes = Uint8Array.from(atob(audio), (c) => c.charCodeAt(0))
+  return new Blob([bytes], { type: contentType })
+}

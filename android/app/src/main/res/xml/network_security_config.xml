@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No plain http from the app, ever: the API, Firebase and the face server are all https/wss.
+     Only the system's own certificate authorities are trusted (no user-installed ones), so a
+     proxy certificate on the device can't read the traffic. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

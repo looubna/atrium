@@ -40,16 +40,17 @@ PROD_PROJECTS = frozenset({"atrium-coach-prod"})
 DATA_PROJECTS: dict[Env, frozenset[str]] = {
     Env.LOCAL: frozenset({"demo-atrium"}),
     Env.TEST: frozenset({"demo-atrium"}),
-    Env.DEV: frozenset({"atrium-coach-dev"}),
+    # atrium-coach-app: the app's project since 2026-10-01, on a new account (atrium-coach-dev's credits ran out).
+    Env.DEV: frozenset({"atrium-coach-dev", "atrium-coach-app"}),
     Env.STAGING: frozenset({"atrium-coach-staging"}),
     Env.PROD: PROD_PROJECTS,
 }
 
 # Which projects each environment may bill AI calls to.
 AI_PROJECTS: dict[Env, frozenset[str]] = {
-    Env.LOCAL: frozenset({"atrium-coach-dev"}),
+    Env.LOCAL: frozenset({"atrium-coach-dev", "atrium-coach-app"}),
     Env.TEST: frozenset(),
-    Env.DEV: frozenset({"atrium-coach-dev"}),
+    Env.DEV: frozenset({"atrium-coach-dev", "atrium-coach-app"}),
     Env.STAGING: frozenset({"atrium-coach-staging"}),
     Env.PROD: PROD_PROJECTS,
 }
@@ -75,6 +76,9 @@ class Settings(BaseSettings):
     live_model: str = "gemini-live-2.5-flash-native-audio"
     live_location: str = "us-central1"
     text_model: str = "gemini-3.8-flash"
+    #: Used when `text_model` stays busy (429) after two retries: widely available, so coaching and
+    #: reports still arrive when shared capacity for the newest model runs out. Empty turns it off.
+    text_fallback_model: str = "gemini-2.5-flash"
     text_location: str = "global"
     speech_location: str = "us"
 
@@ -89,6 +93,14 @@ class Settings(BaseSettings):
 
     app_check_enforced: bool = True
     analytics_salt: SecretStr = SecretStr("")
+    # RevenueCat (paid plans): the webhook's Authorization header value, and the secret REST API key the
+    # server uses to double-check a subscriber before changing their plan. Unset = billing is off.
+    revenuecat_webhook_secret: SecretStr = SecretStr("")
+    # Cloudflare TURN (face video relay for networks that block WebRTC, platform/faces/ice.py): the TURN
+    # key's id and API token. Unset = direct connections only, as before.
+    cloudflare_turn_key_id: str = ""
+    cloudflare_turn_api_token: SecretStr = SecretStr("")
+    revenuecat_api_key: SecretStr = SecretStr("")
     # Faces: people recorded seated at a desk, lip-synced by our LiveTalking server. Unset URL
     # simply means no face — the interview runs on audio alone — so this is deliberately not
     # required in deployed environments. The secret signs the tokens the server checks;
@@ -105,11 +117,21 @@ class Settings(BaseSettings):
     # Compute Engine, so it may change on every start. Empty: `livetalking_url` is the one server.
     face_vms: str = ""
     face_vm_port: int = 8010
+    # Reach the VM over https at <ip-with-dashes>.sslip.io (Caddy on the VM, gpu-startup.sh) instead of
+    # plain http on face_vm_port: phones' WebViews refuse insecure connections. Off = http, as on the desktop.
+    face_vm_https: bool = False
     # The project the VMs live in, when it is not this environment's (local runs on emulators).
     face_vm_project: str = ""
+    # The face server on Cloud Run with a GPU (https://atrium-face-….run.app): Google starts an instance
+    # when a conversation needs a face and scales to zero when nobody talks. Used first when set; the VMs
+    # above (if any) take over only when it cannot come up in time. Empty: VMs only, as before. Several regions:
+    # comma-separated, in order of preference (the next one is woken when the first stays busy).
+    face_cloud_run_url: str = ""
 
     recording_retention_days: int = Field(default=365, ge=1, le=3650)
     free_live_minutes_month: int = Field(default=120, ge=0)
+    #: Live minutes a free account gets once, ever: the trial before a paid plan.
+    free_trial_minutes: int = Field(default=20, ge=0)
     max_json_bytes: int = 1_048_576
     max_resume_bytes: int = 10 * 1_048_576
     # Study material: a term of lecture slides or a scanned chapter is larger than a resume.

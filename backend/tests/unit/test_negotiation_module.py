@@ -49,7 +49,7 @@ async def test_factory_builds_the_session() -> None:
     solo = await factory.build(uid="u", session_id="s", session={"context": {"scenario": "deadline",
                                                                            "mode": "in_person"}}, resumed=False)
     assert solo.lead_name == "Claire Donovan" and solo.panel == () and solo.tools == ("end_interview",)
-    assert "sat down at the table" in solo.opening_message and solo.silence_duration_ms == 900
+    assert "sat down at the table" in solo.opening_message and solo.silence_duration_ms == 1200
     group = await factory.build(uid="u", session_id="s", session={"context": {"scenario": "partnership",
                                                                             "group": True}}, resumed=False)
     assert group.lead_name == "Robert Lindqvist" and [m.name for m in group.panel] == ["Priya Raman", "Kevin Zhou"]
