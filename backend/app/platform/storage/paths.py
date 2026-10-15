@@ -118,6 +118,10 @@ class StoragePaths:
     def face_metrics(self, session_id: str) -> str:
         return f"{self.session_prefix(session_id)}face-metrics.json"
 
+    def body_language(self, session_id: str) -> str:
+        """Body-language findings derived from the face metrics: text and numbers, no samples."""
+        return f"{self.session_prefix(session_id)}body-language.json"
+
     def transcript(self, session_id: str) -> str:
         return f"{self.session_prefix(session_id)}transcript.json"
 

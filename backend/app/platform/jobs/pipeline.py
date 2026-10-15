@@ -34,10 +34,17 @@ from app.platform.competencies.profile import apply_scores
 from app.platform.firestore.paths import UserPaths, job_path
 from app.platform.jobs.queue import TaskRequest, task_name, task_queue
 from app.platform.media.assemble import Playback, assemble_candidate, assemble_interviewer, pcm_duration_ms
+from app.platform.media.body import BodyReport, analyse_body, parse_body_seconds
 from app.platform.media.ffmpeg import mix_to_m4a, pcm_to_flac_chunks
 from app.platform.media.prosody import VoiceMetrics, measure_voice
 from app.platform.media.tracks import SAMPLE_RATES
-from app.platform.media.visual import VisualMetrics, honest_visual_scores, measure_visual, parse_face_seconds
+from app.platform.media.visual import (
+    Setting,
+    VisualMetrics,
+    honest_visual_scores,
+    measure_visual,
+    parse_face_seconds,
+)
 from app.platform.sessions import ProcessingStatus
 from app.platform.storage.objects import processing, user_content
 from app.platform.storage.paths import StoragePaths, Track, processing_prefix
@@ -273,6 +280,18 @@ async def step_poll(job: dict[str, Any]) -> None:
     await advance(job, EVALUATE)
 
 
+def _body_report(face_data: Any, transcript: Transcript, setting: Setting, module: str) -> BodyReport | None:
+    """Body-language findings; never the reason a report is lost (they are extra, and still being validated)."""
+    try:
+        seconds, pose_hz = parse_body_seconds(face_data)
+        return analyse_body(
+            seconds, transcript.candidate_segments(), pose_hz=pose_hz, setting=setting, scenario=module
+        )
+    except Exception:
+        log.warning("body-language analysis failed", exc_info=True)
+        return None
+
+
 async def step_evaluate(job: dict[str, Any]) -> None:
     session = await load_session(job)
     uid, sid, run_id = job["uid"], job["sessionId"], job["runId"]
@@ -296,13 +315,18 @@ async def step_evaluate(job: dict[str, Any]) -> None:
         return
 
     visual: VisualMetrics | None = None
+    body: BodyReport | None = None
     if media_info.get("faceMetrics"):
+        in_person = (session.get("context") or {}).get("mode") == "in_person"
+        setting: Setting = "in_person" if in_person else "online"
         try:
-            face = parse_face_seconds(json.loads(await store.read(StoragePaths(uid).face_metrics(sid))))
-            in_person = (session.get("context") or {}).get("mode") == "in_person"
-            visual = measure_visual(face, transcript.candidate_segments(), "in_person" if in_person else "online")
+            face_data = json.loads(await store.read(StoragePaths(uid).face_metrics(sid)))
+            visual = measure_visual(parse_face_seconds(face_data), transcript.candidate_segments(), setting)
         except (FileNotFoundError, ValueError):
             log.warning("face measurements could not be read")
+            face_data = None
+        if face_data is not None:
+            body = _body_report(face_data, transcript, setting, module)
 
     voice: VoiceMetrics | None = None
     if job.get("candidatePcm"):
@@ -341,6 +365,10 @@ async def step_evaluate(job: dict[str, Any]) -> None:
     await store.write(
         StoragePaths(uid).evaluation(sid, run_id), evaluation.model_dump_json().encode(), "application/json"
     )
+    if body is not None:
+        await store.write(
+            StoragePaths(uid).body_language(sid), json.dumps(body.to_dict()).encode(), "application/json"
+        )
 
     run_ref = db.document(paths.evaluation(sid, run_id))
     batch = db.batch()
@@ -354,6 +382,11 @@ async def step_evaluate(job: dict[str, Any]) -> None:
     })
     for event in evaluation.events:
         batch.set(db.document(f"{paths.events(sid, run_id)}/{event.id}"), event.model_dump(mode="json"))
+    if body is not None:
+        # Numbers only, one per session, for comparing sessions (like competencyHistory).
+        batch.set(db.document(paths.body_history_entry(sid)), {
+            **body.summary(), "module": module, "sessionId": sid, "at": session.get("createdAt") or datetime.now(UTC),
+        })
     await batch.commit()
 
     session_at = session.get("createdAt") or datetime.now(UTC)
@@ -392,6 +425,7 @@ async def step_evaluate(job: dict[str, Any]) -> None:
             raise PermanentStepError("account is being deleted")
         transaction.update(session_ref, {
             **extras,
+            **({"bodyLanguage": body.summary()} if body is not None else {}),
             "processingStatus": ProcessingStatus.COMPLETED.value,
             "processingUpdatedAt": datetime.now(UTC),
             "currentEvaluationRunId": run_id,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -143,7 +144,8 @@ async def test_face_measurements_add_body_language_scores(
     consent = await api_client.put("/api/v1/me/consents/recording", headers=as_user(uid),
                                    json={"accepted": True, "version": CURRENT_CONSENT_VERSION})
     assert consent.status_code < 300
-    timeline = [{"t": t, "present": 1.0, "eye": 0.3, "smile": 0.5, "move": 0.0} for t in range(60)]
+    # Exactly what the app's FaceTracker sends, brightness share included.
+    timeline = [{"t": t, "present": 1.0, "eye": 0.3, "clear": 1.0, "smile": 0.5, "move": 0.0} for t in range(60)]
     url = f"/api/v1/sessions/{sid}/media/face-metrics"
     invalid = await api_client.put(url, headers=as_user(uid), json={"seconds": [{**timeline[0], "eye": 2}]})
     assert invalid.status_code == 422
@@ -157,6 +159,45 @@ async def test_face_measurements_add_body_language_scores(
     eye = scores["comm.eye_contact"]["metric"]
     assert eye["value"] == 30 and eye["verdict"] == "Often looks away"
     assert {"comm.facial_expression", "comm.composure"} <= set(scores)
+
+
+async def test_body_numbers_add_findings_without_changing_the_scores(
+    db: firestore.AsyncClient, queue: RecordingQueue, api_client: httpx.AsyncClient
+) -> None:
+    """Version 3 face metrics: a stored body-language report and history entry, and the same scores as before."""
+    await api_client.put("/api/v1/me/consents/recording", headers=as_user("alice"),
+                         json={"accepted": True, "version": CURRENT_CONSENT_VERSION})
+    plain = [{"t": t, "present": 1.0, "eye": 0.3, "smile": 0.5, "move": 0.0} for t in range(60)]
+    body = {"body": 1.0, "hands": 1.0, "full": 0.0, "clear": 1.0, "yaw": 0.0, "pitch": 0.0, "shoulderW": 0.5,
+            "faceW": 0.25, "neck": 0.8, "handPath": 0.0, "sx": [0.9] * 4, "lw": [[0.3, 1.0]] * 4,
+            "rw": [[-0.3, 1.0]] * 4}
+    rich = [{**second, **body, "tilt": 12.0 if 40 <= second["t"] < 55 else 0.0} for second in plain]
+
+    summaries = []
+    for sid, timeline in (("sess00000011", plain), ("sess00000012", rich)):
+        await seed_session(db, "alice", sid)
+        put = await api_client.put(f"/api/v1/sessions/{sid}/media/face-metrics", headers=as_user("alice"),
+                                   json={"seconds": timeline, "poseHz": 4})
+        assert put.status_code == 204
+        await enqueue_session_processing("alice", sid, "interview")
+        assert await drain(queue) == ["done", "done", "done"]
+        session = (await db.document(f"users/alice/sessions/{sid}").get()).to_dict() or {}
+        summaries.append(session)
+
+    plain_session, rich_session = summaries
+    assert [s["score"] for s in plain_session["summary"]["scores"]] == [
+        s["score"] for s in rich_session["summary"]["scores"]
+    ]
+    # An older-style timeline still gets a report: the body checks say why they could not run.
+    assert plain_session["bodyLanguage"]["findingCount"] == 0
+    assert rich_session["bodyLanguage"]["findingCount"] == 1
+    assert rich_session["bodyLanguage"]["framing"] == "upper_body"
+
+    report = json.loads(await user_content().read(StoragePaths("alice").body_language("sess00000012")))
+    assert [f["check"] for f in report["findings"]] == ["posture_tilt"]
+    assert report["quality"]["poseHz"] == 4
+    history = (await db.document("users/alice/bodyHistory/sess00000012").get()).to_dict() or {}
+    assert history["module"] == "interview" and history["findingCount"] == 1
 
 
 async def test_second_attempt_records_improvement_delta(db: firestore.AsyncClient, queue: RecordingQueue) -> None:

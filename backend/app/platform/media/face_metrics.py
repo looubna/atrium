@@ -30,6 +30,12 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 MAX_SECONDS = 2 * 60 * 60
 
 Fraction = Annotated[float, Field(ge=0, le=1)]
+Degrees = Annotated[float, Field(ge=-180, le=180)]
+#: Image-height units, or shoulder widths: bounded generously, they are only ever compared.
+Span = Annotated[float, Field(ge=-20, le=20)]
+#: Up to 8 pose samples a second; a missing sample is null.
+PoseSamples = Annotated[list[Span | None], Field(max_length=8)]
+WristSamples = Annotated[list[tuple[Span, Span] | None], Field(max_length=8)]
 
 
 class FaceSecondIn(BaseModel):
@@ -40,6 +46,8 @@ class FaceSecondIn(BaseModel):
     eye: Fraction
     smile: Fraction
     move: Fraction
+    # Share of the second bright enough to judge the eyes (`clear` in the app's FaceTracker).
+    clear: Fraction | None = None
     # In-person panels: share of the second turned toward whoever was speaking.
     toSpeaker: Fraction | None = None
     # Body tracking, when the device ran it: shoulders in frame, hands in frame, hands at the
@@ -48,12 +56,27 @@ class FaceSecondIn(BaseModel):
     hands: Fraction | None = None
     handsFace: Fraction | None = None
     full: Fraction | None = None
+    # Version 3, the body-language checks (`app/platform/media/body.py`): head angles, the shoulder
+    # line's tilt, shoulder and face width, the head's height above the shoulders, hand movement,
+    # and at the pose rate the shoulder midpoint and both wrists relative to it. Numbers only.
+    yaw: Degrees | None = None
+    pitch: Degrees | None = None
+    tilt: Degrees | None = None
+    shoulderW: Annotated[float, Field(ge=0, le=20)] | None = None
+    faceW: Annotated[float, Field(ge=0, le=20)] | None = None
+    neck: Span | None = None
+    handPath: Annotated[float, Field(ge=0, le=100)] | None = None
+    sx: PoseSamples | None = None
+    lw: WristSamples | None = None
+    rw: WristSamples | None = None
 
 
 class FaceMetricsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     seconds: Annotated[list[FaceSecondIn], Field(max_length=MAX_SECONDS)]
+    #: Body-tracking samples a second (the device lowers it when tracking is slow).
+    poseHz: Annotated[int, Field(ge=1, le=8)] | None = None
 
 
 @router.put("/{session_id}/media/face-metrics", status_code=204)
@@ -76,7 +99,10 @@ async def save_face_metrics(
 
     # One entry per second: a later entry for the same second (after a reconnect) wins.
     seconds = sorted({s.t: s for s in body.seconds}.values(), key=lambda s: s.t)
-    payload = {"version": 2, "seconds": [s.model_dump(exclude_none=True) for s in seconds]}
+    payload = {
+        "version": 3, "seconds": [s.model_dump(exclude_none=True) for s in seconds],
+        **({"poseHz": body.poseHz} if body.poseHz else {}),
+    }
     await user_content().write(
         StoragePaths(user.uid).face_metrics(session_id), json.dumps(payload).encode(), "application/json"
     )

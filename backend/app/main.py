@@ -75,6 +75,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f"{API_PREFIX}/exam/courses": settings.max_material_bytes + 64_000,
             # Practice Center rounds: up to 8 MB of recorded audio (see modules/practice/api.py).
             f"{API_PREFIX}/practice/rounds": 8 * 1_048_576 + 64_000,
+            # Face and body measurements: one entry a second with pose samples, for up to a 65-minute round.
+            # Prefix matching can't name the `{id}/media/face-metrics` segment, so the session routes share
+            # the allowance; their own bodies are bounded by the schemas behind it.
+            f"{API_PREFIX}/sessions": 4 * 1_048_576,
             # Local development only: video chunks sent to the stand-in for Cloud Storage uploads.
             f"{API_PREFIX}/local-uploads": 16 * 1_048_576,
         },

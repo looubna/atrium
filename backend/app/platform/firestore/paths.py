@@ -177,6 +177,12 @@ class UserPaths:
     def competency_history(self) -> str:
         return f"{self.user()}/competencyHistory"
 
+    def body_history(self) -> str:
+        return f"{self.user()}/bodyHistory"
+
+    def body_history_entry(self, session_id: str) -> str:
+        return f"{self.body_history()}/{require_id(session_id)}"
+
     def practice_progress(self) -> str:
         return f"{self.user()}/practice/progress"
 
