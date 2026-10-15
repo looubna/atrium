@@ -39,7 +39,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             warmup.add_done_callback(lambda task: task.exception())
         yield
 
-    public_docs = settings.app_env is not Env.PROD and settings.role is Role.API
+    # Only on a developer's machine: the app's users are served by APP_ENV=dev (atrium-coach-app), so
+    # "not prod" would publish the whole API map to anyone.
+    public_docs = settings.app_env in (Env.LOCAL, Env.TEST) and settings.role is Role.API
     app = FastAPI(
         title=f"Atrium {settings.role.value}",
         version="1.0.0",

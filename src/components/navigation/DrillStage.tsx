@@ -16,7 +16,8 @@ import { clock, useCountdown } from '@/lib/useCountdown'
 import { FaceTracker } from '@/platform/media/faceMetrics'
 import { cn } from '@/lib/utils'
 import { useVoiceActivity } from '@/lib/useVoiceActivity'
-import { ApiError } from '@/platform/api/client'
+import { ApiError, isTrialUsed, TRIAL_USED_MESSAGE } from '@/platform/api/client'
+import { getBillingStatus } from '@/modules/billing/api'
 import {
   THINK_PREP_SECONDS,
   formatMetric,
@@ -26,6 +27,7 @@ import {
   type RoundResult,
 } from '@/modules/practice/api'
 import { useAppStore } from '@/state/useAppStore'
+import { usePaywall } from '../billing/Paywall'
 import { RoundFeedback } from '../practice/RoundFeedback'
 import { IconCheck, IconChevronRight, IconClose, IconMic, IconMicOff, IconTimer } from '../ui/Icon'
 
@@ -120,6 +122,14 @@ function DrillRunner({ id, minutes, framework, place, onNextStep, onLeave }: {
   lensRef.current = lensEye
   const promptRef = useRef(prompt)
   promptRef.current = prompt
+  // A free account whose minutes are used up gets no analysed rounds (the server refuses them): the
+  // paywall opens before a round is recorded, not after the user has spoken it.
+  const [trialUsed, setTrialUsed] = useState(false)
+  useEffect(() => {
+    getBillingStatus()
+      .then((status) => setTrialUsed(status.isTrial && status.minutesLeft === 0))
+      .catch(() => {})
+  }, [])
 
   const analyse = (recording: Blob) => {
     if (!submitNext.current) return
@@ -144,8 +154,9 @@ function DrillRunner({ id, minutes, framework, place, onNextStep, onLeave }: {
           setAnalysis({ state: 'done', result })
         })
         .catch((error: unknown) => {
-          const message =
-            error instanceof ApiError && error.status === 429
+          const message = isTrialUsed(error)
+            ? TRIAL_USED_MESSAGE
+            : error instanceof ApiError && error.status === 429
               ? 'You’ve reached today’s limit for analysed rounds. You can keep practising without feedback.'
               : error instanceof ApiError && error.status === 403
                 ? 'Accept AI processing in your account to get feedback on your rounds.'
@@ -198,6 +209,10 @@ function DrillRunner({ id, minutes, framework, place, onNextStep, onLeave }: {
   }, [left, phase])
 
   const startRound = (next?: DrillPrompt) => {
+    if (trialUsed) {
+      usePaywall.getState().show('minutes')
+      return
+    }
     // The session clock starts with the first round.
     if (!sessionClock.running && !sessionClock.done && sessionClock.left === minutes * 60) sessionClock.toggle()
     if (phase === 'review') setRounds((n) => n + 1)

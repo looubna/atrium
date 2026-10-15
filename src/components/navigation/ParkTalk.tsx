@@ -1,4 +1,4 @@
-import { isTrialUsed, TRIAL_USED_MESSAGE } from '@/platform/api/client'
+import { isTrialUsed } from '@/platform/api/client'
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { EMOTIONAL_SCENARIOS, type EmotionalPartner, type EmotionalScenario } from '@/data/practice'
 import { clock, useCountdown } from '@/lib/useCountdown'
@@ -186,7 +186,12 @@ function Conversation({ partner, scenario, topic, minutes, onLeave, onFeedback }
       .then(({ id }) => !unmounted.current && setSessionId(id))
       .catch((error: unknown) => {
         useConversationLoading.getState().set(false)
-        if (!unmounted.current) setNote(isTrialUsed(error) ? TRIAL_USED_MESSAGE : 'The conversation could not start. Check your connection.')
+        if (unmounted.current) return
+        // Nothing began: the clock must not run down on an empty room.
+        timer.stop()
+        // The paywall is open over everything: back to the building, not a room with nobody talking.
+        if (isTrialUsed(error)) return onLeave()
+        setNote('The conversation could not start. Check your connection.')
       })
   }
 

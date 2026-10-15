@@ -1,4 +1,4 @@
-import { isTrialUsed, TRIAL_USED_MESSAGE } from '@/platform/api/client'
+import { isTrialUsed } from '@/platform/api/client'
 import { type MutableRefObject, useEffect, useRef, useState } from 'react'
 import { PRACTICE_FORMATS } from '@/data/practice'
 import { clock, useCountdown } from '@/lib/useCountdown'
@@ -86,7 +86,12 @@ function Consultation({ minutes, onLeave }: { minutes: number; onLeave: () => vo
       .then(({ id }) => !unmounted.current && setSessionId(id))
       .catch((error: unknown) => {
         useConversationLoading.getState().set(false)
-        if (!unmounted.current) setNote(isTrialUsed(error) ? TRIAL_USED_MESSAGE : 'The consultation could not start. Check your connection.')
+        if (unmounted.current) return
+        // Nothing began: the clock must not run down on an empty room.
+        timer.stop()
+        // The paywall is open over everything: back to the building, not a room with nobody talking.
+        if (isTrialUsed(error)) return onLeave()
+        setNote('The consultation could not start. Check your connection.')
       })
   }
 

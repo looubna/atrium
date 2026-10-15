@@ -123,3 +123,17 @@ def test_every_upload_route_may_actually_carry_its_file() -> None:
     for prefix, file_bytes in uploads.items():
         assert prefix in limits, f"{prefix} accepts a file but has no body limit of its own"
         assert limits[prefix] > file_bytes, prefix
+
+
+def test_the_api_map_is_only_published_on_a_developer_machine() -> None:
+    """The app's real users are on APP_ENV=dev (atrium-coach-app): /docs there would show anyone every route."""
+    from app.core.settings import Env, get_settings
+    from app.main import create_app
+
+    def paths(env: Env) -> set[str]:
+        app = create_app(get_settings().model_copy(update={"app_env": env}))
+        return {getattr(r, "path", "") for r in app.routes}
+
+    assert "/docs" in paths(Env.LOCAL)
+    for env in (Env.DEV, Env.STAGING, Env.PROD):
+        assert not {"/docs", "/openapi.json"} & paths(env), env

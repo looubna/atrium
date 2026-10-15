@@ -38,8 +38,14 @@ export function useCountdown(totalSeconds: number) {
     setRunning((r) => !r)
   }
 
+  /** Stops and rewinds: the session never began. Safe from a stale closure (only setters). */
+  const stop = () => {
+    setRunning(false)
+    setLeft(totalSeconds)
+  }
+
   const label = running ? 'Pause' : done ? 'Again' : left < totalSeconds ? 'Resume' : 'Start'
   const progress = totalSeconds > 0 ? left / totalSeconds : 0
 
-  return { left, running, done, toggle, label, progress }
+  return { left, running, done, toggle, stop, label, progress }
 }

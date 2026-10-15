@@ -11,7 +11,7 @@ import {
 } from '@/modules/busstop/api'
 import { useInterviewRoom } from '@/modules/interview/live/useInterviewRoom'
 import type { LiveFailure } from '@/modules/interview/live/useLiveInterview'
-import { ApiError } from '@/platform/api/client'
+import { ApiError, isTrialUsed } from '@/platform/api/client'
 import { holdFaces } from '@/platform/avatar/faceWarmup'
 import { useAppStore } from '@/state/useAppStore'
 import { Button } from '../ui/Button'
@@ -118,7 +118,12 @@ function Conversation({ area, minutes, onLeave, onFeedback }: {
       .then(({ id }) => !unmounted.current && setSessionId(id))
       .catch((error: unknown) => {
         useConversationLoading.getState().set(false)
-        if (!unmounted.current) setNote(startProblem(error))
+        if (unmounted.current) return
+        // Nothing began: the clock must not run down on an empty room.
+        timer.stop()
+        // The paywall is open over everything: back to the stop, not a room with nobody talking.
+        if (isTrialUsed(error)) return onLeave()
+        setNote(startProblem(error))
       })
   }
 

@@ -621,6 +621,8 @@ function InterviewSetupForm({
         <Duration minutes={minutes} setMinutes={setMinutes} />
         </div>
 
+        {/* Above the button: below it, the panel's bottom edge cut the message off. */}
+        {problemBanner}
         <p className="mt-3 text-[10.5px] leading-relaxed text-faint">
           A live AI interviewer listens and responds to your answers. The session is recorded so feedback can point to
           exact moments.
@@ -629,7 +631,6 @@ function InterviewSetupForm({
           <IconCheck width={15} height={15} />
           {pending ? 'Preparing your interviewer…' : 'Confirm interview'}
         </Button>
-        {problemBanner}
       </div>
     )
   }
@@ -720,6 +721,8 @@ function InterviewSetupForm({
         )}
       </div>
 
+      {/* Above the button: below it, the panel's bottom edge cut the message off. */}
+      {problemBanner}
       <p className="mt-3 text-[10.5px] leading-relaxed text-faint">
         {general
           ? 'Practise common behavioral questions with a live AI interviewer.'
@@ -734,7 +737,6 @@ function InterviewSetupForm({
         <IconCheck width={15} height={15} />
         {general ? 'Continue' : pending ? 'Starting research…' : 'Build my interview journey'}
       </Button>
-      {problemBanner}
     </div>
   )
 }
