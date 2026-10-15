@@ -66,6 +66,8 @@ class FaceSecondIn(BaseModel):
     faceW: Annotated[float, Field(ge=0, le=20)] | None = None
     neck: Span | None = None
     handPath: Annotated[float, Field(ge=0, le=100)] | None = None
+    # Share of the second in which the background moved: the camera itself was moving.
+    camMove: Fraction | None = None
     sx: PoseSamples | None = None
     lw: WristSamples | None = None
     rw: WristSamples | None = None

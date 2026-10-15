@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { faceWidth, p95, poseFeatures, poseSlot, wristTravel } from '../bodyFeatures'
+import { backgroundChange, faceWidth, grey, p95, personSpan, poseFeatures, poseSlot, wristTravel } from '../bodyFeatures'
 
 type L = { x: number; y: number; z: number; visibility: number }
 const hidden: L = { x: 0.5, y: 0.5, z: 0, visibility: 0 }
@@ -78,5 +78,27 @@ describe('body numbers from one pose', () => {
     expect(p95([])).toBe(0)
     expect(p95(Array.from({ length: 20 }, (_, i) => i + 1))).toBe(20)
     expect(p95([...Array(19).fill(10), 100])).toBe(100)
+  })
+
+  it('tells a moving camera from a person moving in front of a still one', () => {
+    const W = 10
+    const frame = (shift: number, personAt: number) =>
+      Float32Array.from({ length: W * 2 }, (_, i) => {
+        const x = i % W
+        if (x >= personAt && x < personAt + 3) return 200 // the person
+        return ((x + shift) % W) * 20 // a background with texture
+      })
+    // The person moves two columns; the background stays: little change outside the person.
+    expect(backgroundChange(frame(0, 3), frame(0, 5), W, 0.3, 0.8)).toBe(0)
+    // The camera pans: the background shifts everywhere.
+    expect(backgroundChange(frame(0, 4), frame(2, 4), W, 0.4, 0.7)!).toBeGreaterThan(20)
+    // The person fills the picture: nothing left to judge.
+    expect(backgroundChange(frame(0, 0), frame(1, 0), W, 0, 0.95)).toBeNull()
+  })
+
+  it('reads grey levels and the person span', () => {
+    expect(Array.from(grey([255, 255, 255, 255, 0, 0, 0, 255]))).toEqual([255, 0])
+    expect(personSpan(pose({ 11: at(0.6, 0.6), 12: at(0.4, 0.6) }))).toEqual([expect.closeTo(0.32), expect.closeTo(0.68)])
+    expect(personSpan(pose({}))).toBeNull()
   })
 })

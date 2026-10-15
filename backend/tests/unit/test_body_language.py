@@ -228,3 +228,20 @@ def test_two_samples_a_second_still_finds_a_slow_sway() -> None:
     report = analyse_body(still(40, sx=(0.9,) * 2, lw=((0.3, 1.0),) * 2, rw=((-0.3, 1.0),) * 2)
                           + [replace(r, t=r.t + 40) for r in rows], [], pose_hz=2)
     assert len(findings(report, "sway")) == 1
+
+
+def test_a_moving_camera_is_not_sway_and_says_why() -> None:
+    # A handheld phone: the whole picture, background included, moves side to side.
+    moving = [replace(r, cam_move=1.0) for r in wave(60, 40, period_s=3.0, amplitude=0.1, what="torso")]
+    report = analyse_body([replace(s, cam_move=1.0) for s in still(40)] + moving, [], pose_hz=HZ)
+    assert findings(report, "sway") == []
+    assert report.checks["sway"]["reason"] == "The camera was moving (held in a hand?), so this could not be measured."
+    # Positions relative to the body still count.
+    assert report.checks["head_lower"]["status"] == "measured"
+
+
+def test_pauses_inside_an_answer_do_not_restart_the_thinking_allowance() -> None:
+    timeline = still(20) + still(10, start=20, eye=0.0, yaw=30.0) + still(30, start=30)
+    pieces = [answer(10, 21, "a"), answer(22, 24, "b"), answer(25, 27, "c"), answer(28, 50, "d")]
+    found = findings(analyse_body(timeline, pieces, pose_hz=HZ), "look_away")
+    assert [(f.start_ms, f.end_ms) for f in found] == [(20_000, 30_000)]

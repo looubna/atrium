@@ -105,6 +105,8 @@ class BodySecond:
     face_w: float | None = None
     neck: float | None = None
     hand_path: float | None = None
+    #: Share of the second in which the background moved: the camera itself was moving (held in a hand).
+    cam_move: float | None = None
     #: At the pose rate: shoulder midpoint x (image-height units) and wrists relative to it (shoulder widths).
     sx: tuple[float | None, ...] = ()
     lw: tuple[Point | None, ...] = ()
@@ -214,7 +216,7 @@ def parse_body_seconds(data: Any) -> tuple[list[BodySecond], int]:
             t=t, present=present, eye=eye, clear=_num(item, "clear"), body=_num(item, "body"),
             hands=_num(item, "hands"), full=_num(item, "full"), yaw=_num(item, "yaw"), pitch=_num(item, "pitch"),
             tilt=_num(item, "tilt"), shoulder_w=_num(item, "shoulderW"), face_w=_num(item, "faceW"),
-            neck=_num(item, "neck"), hand_path=_num(item, "handPath"),
+            neck=_num(item, "neck"), hand_path=_num(item, "handPath"), cam_move=_num(item, "camMove"),
             sx=_nums(item.get("sx")), lw=_points(item.get("lw")), rw=_points(item.get("rw")),
         ))
     out.sort(key=lambda s: s.t)
@@ -231,6 +233,12 @@ def _clear(s: BodySecond) -> bool:
 def _pose_ok(s: BodySecond) -> bool:
     """The shoulders were seen this second, in light good enough to trust the landmarks."""
     return s.body is not None and s.body >= SEEN and bool(s.shoulder_w) and _clear(s)
+
+
+def _steady(s: BodySecond) -> bool:
+    """The camera stood still this second. A moving camera moves the whole picture, which reads as the
+    body swaying or tilting; positions relative to the body (wrists, head height) are not affected."""
+    return s.cam_move is None or s.cam_move < SEEN
 
 
 def _face_ok(s: BodySecond) -> bool:
@@ -254,6 +262,21 @@ def _episodes(flagged: Iterable[int], min_s: int, max_gap: int = MAX_GAP_S) -> l
 
 def _speaking_seconds(segments: list[Segment]) -> set[int]:
     return {t for s in segments for t in range(s.start_ms // 1000, s.end_ms // 1000 + 1)}
+
+
+#: Pieces of speech closer than this are one answer: a transcript splits an answer at its pauses.
+ANSWER_GAP_MS = 2_000
+
+
+def _answer_starts(segments: list[Segment]) -> list[int]:
+    """When each answer began, in seconds, with pauses inside an answer bridged."""
+    starts: list[int] = []
+    last_end: int | None = None
+    for segment in sorted(segments, key=lambda s: s.start_ms):
+        if last_end is None or segment.start_ms - last_end >= ANSWER_GAP_MS:
+            starts.append(segment.start_ms // 1000)
+        last_end = max(segment.end_ms, last_end or 0)
+    return starts
 
 
 def _confidence(seen_share: float, margin: float, heuristic: bool) -> Confidence:
@@ -362,7 +385,10 @@ class _Analysis:
         self.by_t = {s.t: s for s in seconds}
         self.speaking = _speaking_seconds(segments)
         self.segments = segments
-        self.posed = [s for s in seconds if _pose_ok(s)]
+        self.seen = [s for s in seconds if _pose_ok(s)]
+        # Tilt and sway are read from the body's place in the picture, so only while the camera was still.
+        # Everything else is measured relative to the body itself, which a moving camera does not change.
+        self.posed = [s for s in self.seen if _steady(s)]
         self.findings: list[BodyFinding] = []
         self.checks: dict[str, dict[str, str]] = {}
         self.metrics: dict[str, float] = {}
@@ -375,26 +401,34 @@ class _Analysis:
             exercise_id=EXERCISE_FOR_CHECK[check], scenario=self.scenario,
         ))
 
+    def still_reason(self, otherwise: str) -> str:
+        """Why a check that needs a still camera could not run."""
+        if len(self.seen) >= MIN_TRACKED_SECONDS and len(self.posed) < MIN_TRACKED_SECONDS:
+            return "The camera was moving (held in a hand?), so this could not be measured."
+        return otherwise
+
     def unsupported(self, check: Check, reason: str) -> None:
         self.checks[check] = {"status": "unsupported", "reason": reason}
 
     def measured(self, check: Check) -> None:
         self.checks[check] = {"status": "measured"}
 
-    def share_of_tracked(self, runs: list[tuple[int, int]]) -> float:
+    def share_of_tracked(self, runs: list[tuple[int, int]], steady_only: bool = False) -> float:
         inside = {t for a, b in runs for t in range(a, b + 1)}
-        return float(_pct(sum(1 for s in self.posed if s.t in inside), len(self.posed)))
+        rows = self.posed if steady_only else self.seen
+        return float(_pct(sum(1 for s in rows if s.t in inside), len(rows)))
 
     # 1a ----
     def tilt(self) -> None:
         rows = [s for s in self.posed if s.tilt is not None]
         base = _baseline([s.tilt for s in rows if s.tilt is not None])
         if base is None or len(rows) < MIN_TRACKED_SECONDS:
-            return self.unsupported("posture_tilt", "Your shoulders were not in frame long enough to compare.")
+            reason = self.still_reason("Your shoulders were not in frame long enough to compare.")
+            return self.unsupported("posture_tilt", reason)
         self.measured("posture_tilt")
         flagged = [s.t for s in rows if s.tilt is not None and abs(s.tilt - base) > TILT_DEGREES]
         runs = _episodes(flagged, TILT_MIN_S)
-        self.metrics["tiltPct"] = self.share_of_tracked(runs)
+        self.metrics["tiltPct"] = self.share_of_tracked(runs, steady_only=True)
         for a, b in _longest(runs):
             values = [self.by_t[t].tilt for t in range(a, b + 1) if t in self.by_t and self.by_t[t].tilt is not None]
             mean = float(np.mean([v for v in values if v is not None]))
@@ -413,7 +447,7 @@ class _Analysis:
         if self.setting == "in_person":
             # Turning toward whoever is speaking on a panel is what a candidate should do.
             return self.unsupported("turned_away", "In a panel, turning toward whoever speaks is expected.")
-        rows = [s for s in self.posed if s.face_w and s.shoulder_w and s.present >= SEEN]
+        rows = [s for s in self.seen if s.face_w and s.shoulder_w and s.present >= SEEN]
         ratios = [s.shoulder_w / s.face_w for s in rows if s.shoulder_w and s.face_w]
         base = _baseline(ratios)
         if base is None or len(rows) < MIN_TRACKED_SECONDS:
@@ -437,7 +471,7 @@ class _Analysis:
 
     # 1c ----
     def head_lower(self) -> None:
-        rows = [s for s in self.posed if s.neck is not None and s.present >= SEEN]
+        rows = [s for s in self.seen if s.neck is not None and s.present >= SEEN]
         base = _baseline([s.neck for s in rows if s.neck is not None])
         if base is None or base <= 0.2 or len(rows) < MIN_TRACKED_SECONDS:
             return self.unsupported("head_lower", "Your head and shoulders were not in frame together long enough.")
@@ -508,7 +542,7 @@ class _Analysis:
     def gesture_timing(self, hands_ok: bool) -> None:
         if not hands_ok:
             return self.unsupported("gesture_timing", "Your hands were not in frame enough of the time.")
-        rows = [s for s in self.posed if s.hand_path is not None and (s.hands or 0) >= SEEN]
+        rows = [s for s in self.seen if s.hand_path is not None and (s.hands or 0) >= SEEN]
         speaking = [s for s in rows if s.t in self.speaking]
         listening = [s for s in rows if s.t not in self.speaking]
         if len(speaking) < MIN_JUDGED_SPEAKING_S or len(listening) < MIN_JUDGED_SPEAKING_S:
@@ -536,7 +570,7 @@ class _Analysis:
 
     # 3 ----
     def look_away(self) -> None:
-        grace = {t for s in self.segments for t in range(s.start_ms // 1000, s.start_ms // 1000 + THINKING_GRACE_S)}
+        grace = {t for start in _answer_starts(self.segments) for t in range(start, start + THINKING_GRACE_S)}
         judged = [s for s in self.seconds if s.t in self.speaking and s.t not in grace and _face_ok(s)]
         if len(judged) < MIN_JUDGED_SPEAKING_S:
             return self.unsupported("look_away", "Your face was not clearly visible long enough while you spoke.")
@@ -562,9 +596,9 @@ class _Analysis:
     # 4 ----
     def sway(self) -> None:
         if len(self.posed) < MIN_TRACKED_SECONDS:
-            return self.unsupported("sway", "Your shoulders were not in frame long enough.")
+            return self.unsupported("sway", self.still_reason("Your shoulders were not in frame long enough."))
         self.measured("sway")
-        series = _series(self.seconds, self.hz, lambda s: s.sx if _pose_ok(s) else ())
+        series = _series(self.seconds, self.hz, lambda s: s.sx if _pose_ok(s) and _steady(s) else ())
         length, flagged = SWAY_WINDOW_S, set[int]()
         hits: list[tuple[int, float, float]] = []
         first, last = self.seconds[0].t, self.seconds[-1].t
@@ -585,7 +619,7 @@ class _Analysis:
                 flagged.update(_active_seconds(x, start, self.hz, SWAY_AMPLITUDE[0] / 2))
                 hits.append((start, period, amplitude))
         runs = _episodes(flagged, length)
-        self.metrics["swayPct"] = self.share_of_tracked(runs)
+        self.metrics["swayPct"] = self.share_of_tracked(runs, steady_only=True)
         for a, b in _longest(runs):
             period, amplitude = _medians(hits, a, b)
             self.add(
@@ -618,7 +652,7 @@ def analyse_body(
     """Timestamped body-language findings, with each check marked measured or unsupported (and why)."""
     analysis = _Analysis(seconds, candidate_segments, pose_hz, setting, scenario)
     framing = _framing(seconds)
-    posed = analysis.posed
+    posed = analysis.seen
     with_body = [s for s in seconds if s.body is not None]
     hands_pct = _pct(sum(1 for s in posed if (s.hands or 0) >= SEEN), len(posed))
     report = BodyReport(

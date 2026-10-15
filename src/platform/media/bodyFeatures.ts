@@ -107,3 +107,49 @@ export function p95(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))]
 }
+
+/** The tiny grey copy of the frame the camera-motion check compares (columns × rows). */
+export const MOTION_W = 32
+export const MOTION_H = 18
+
+/** Grey levels (0-255) from an RGBA image, row by row. */
+export function grey(rgba: ArrayLike<number>): Float32Array {
+  const out = new Float32Array(rgba.length / 4)
+  for (let i = 0; i < out.length; i++) out[i] = 0.299 * rgba[i * 4] + 0.587 * rgba[i * 4 + 1] + 0.114 * rgba[i * 4 + 2]
+  return out
+}
+
+/**
+ * How much the background changed between two grey thumbnails: the mean absolute difference over the
+ * columns outside the person (`personX0..personX1`, 0..1 of the width), so a person moving in front of a
+ * still camera barely changes it and a moving camera changes all of it. Null when too little background
+ * is left to judge.
+ */
+export function backgroundChange(
+  before: Float32Array,
+  after: Float32Array,
+  width: number,
+  personX0: number,
+  personX1: number,
+): number | null {
+  const height = after.length / width
+  const x0 = Math.floor(Math.max(0, personX0) * width)
+  const x1 = Math.ceil(Math.min(1, personX1) * width)
+  let sum = 0
+  let count = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (x >= x0 && x < x1) continue
+      const i = y * width + x
+      sum += Math.abs(after[i] - before[i])
+      count++
+    }
+  }
+  return count >= (width * height) / 5 ? sum / count : null
+}
+
+/** The person's horizontal extent (0..1) from the landmarks seen, widened a little; null with none seen. */
+export function personSpan(landmarks: NormalizedLandmark[], pad = 0.08): [number, number] | null {
+  const xs = landmarks.filter(seen).map((l) => l.x)
+  return xs.length ? [Math.min(...xs) - pad, Math.max(...xs) + pad] : null
+}

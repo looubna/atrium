@@ -1,7 +1,12 @@
 import type { FaceLandmarker, NormalizedLandmark, PoseLandmarker } from '@mediapipe/tasks-vision'
 import {
   MAX_HAND_PATH,
+  MOTION_H,
+  MOTION_W,
+  backgroundChange,
   faceWidth,
+  grey,
+  personSpan,
   p95,
   poseFeatures,
   poseSlot,
@@ -34,6 +39,13 @@ const POSE_EVERY_SLOW = 2
 const SLOW_POSE_MS = 40
 /** Timings kept to judge that. */
 const POSE_TIMINGS = 20
+/**
+ * Background change (mean grey levels, over about a second) above which the camera itself moved.
+ * Measured on validation clips: a handheld phone passed it in about 40% of samples, a fixed camera in 7%.
+ */
+const CAMERA_MOVED = 3
+/** Where the person is assumed to be when no landmarks were found: the middle of the picture. */
+const MIDDLE: [number, number] = [0.28, 0.72]
 /** A landmark counts as in frame above this visibility, and inside the image. */
 const VISIBLE = 0.5
 /** A wrist closer to the nose than this many shoulder-widths is up at the head or face. */
@@ -98,6 +110,8 @@ export interface FaceSecond {
   neck?: number
   /** How far the wrists travelled this second, in shoulder widths. */
   handPath?: number
+  /** Share of the second in which the background moved: the camera itself was moving. */
+  camMove?: number
   /** One slot per body sample (`poseHz` a second): the shoulder midpoint's x, and the wrists relative to it. */
   sx?: (number | null)[]
   lw?: (Point | null)[]
@@ -290,6 +304,9 @@ interface Bucket {
   necks: number
   neck: number
   handPath: number
+  /** Body samples where the camera-motion check could judge, and where it saw the camera move. */
+  camJudged: number
+  camMoved: number
   sx: (number | null)[] | null
   lw: (Point | null)[] | null
   rw: (Point | null)[] | null
@@ -305,6 +322,7 @@ function bodyNumbers(b: Bucket): Partial<FaceSecond> {
   return {
     ...(b.angles ? { yaw: round1(b.yaw / b.angles), pitch: round1(b.pitch / b.angles) } : {}),
     ...(b.faces ? { faceW: round3(b.faceW / b.faces) } : {}),
+    ...(b.camJudged ? { camMove: round2(b.camMoved / b.camJudged) } : {}),
     ...(b.shoulders
       ? {
           tilt: round1(b.tilt / b.shoulders),
@@ -334,6 +352,9 @@ export class FaceTracker {
   private poseEvery = 1
   private readonly poseTimings: number[] = []
   private lastPose: PoseFeatures | null = null
+  /** About the last second of grey thumbnails, one per body sample, for the camera-motion check. */
+  private readonly thumbnails: Float32Array[] = []
+  private motionCanvas: HTMLCanvasElement | null = null
 
   /** Body-tracking samples a second, as recorded (lower on a slow device). */
   get poseHz(): number {
@@ -419,7 +440,7 @@ export class FaceTracker {
       samples: 0, present: 0, clear: 0, judged: 0, eye: 0, smile: 0, move: 0, spoken: 0, toSpeaker: 0,
       poses: 0, body: 0, hands: 0, handsFace: 0, full: 0,
       angles: 0, yaw: 0, pitch: 0, faces: 0, faceW: 0, shoulders: 0, tilt: 0, shoulderW: 0, necks: 0, neck: 0,
-      handPath: 0, sx: null, lw: null, rw: null,
+      handPath: 0, camJudged: 0, camMoved: 0, sx: null, lw: null, rw: null,
     }
     bucket.samples += 1
     this.samples += 1
@@ -485,6 +506,7 @@ export class FaceTracker {
       ? readPose(landmarks, aspect)
       : { body: false, hands: false, handsFace: false, full: false }
     this.addBody(bucket, landmarks ? poseFeatures(landmarks, aspect) : null)
+    this.checkCamera(video, bucket, landmarks)
     bucket.poses += 1
     if (seen.body) bucket.body += 1
     if (seen.hands) bucket.hands += 1
@@ -527,6 +549,37 @@ export class FaceTracker {
     }
     bucket.handPath += wristTravel(this.lastPose, features)
     this.lastPose = features
+  }
+
+  /**
+   * Whether the camera itself moved over the last second: the background (the picture outside the
+   * person) changes then, which it barely does when only the person moves. A moving camera makes the
+   * whole body look like it sways or tilts, so those checks skip such seconds.
+   */
+  private checkCamera(video: HTMLVideoElement, bucket: Bucket, landmarks: NormalizedLandmark[] | undefined): void {
+    this.motionCanvas ??= document.createElement('canvas')
+    const canvas = this.motionCanvas
+    canvas.width = MOTION_W
+    canvas.height = MOTION_H
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return
+    let now: Float32Array
+    try {
+      context.drawImage(video, 0, 0, MOTION_W, MOTION_H)
+      now = grey(context.getImageData(0, 0, MOTION_W, MOTION_H).data)
+    } catch {
+      return
+    }
+    const second = Math.max(1, Math.round(this.poseHz))
+    const before = this.thumbnails.length >= second ? this.thumbnails[this.thumbnails.length - second] : null
+    this.thumbnails.push(now)
+    if (this.thumbnails.length > second) this.thumbnails.shift()
+    if (!before) return
+    const [x0, x1] = (landmarks && personSpan(landmarks)) ?? MIDDLE
+    const change = backgroundChange(before, now, MOTION_W, x0, x1)
+    if (change === null) return
+    bucket.camJudged += 1
+    if (change > CAMERA_MOVED) bucket.camMoved += 1
   }
 
   private lumaCanvas: HTMLCanvasElement | null = null
