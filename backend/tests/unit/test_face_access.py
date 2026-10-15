@@ -36,7 +36,7 @@ def server(monkeypatch: pytest.MonkeyPatch) -> _Server:
 
 
 def _left(monkeypatch: pytest.MonkeyPatch, seconds: int) -> None:
-    async def limits(user: AuthUser) -> tuple[PlanId, Any]:
+    async def limits(user: AuthUser, *, practice: bool = True) -> tuple[PlanId, Any]:
         return PlanId.FREE, PlanLimits(0, 45, 1, 6, 5, 6, 2, 10, 25)
 
     async def minutes(db: Any, uid: str, limits: PlanLimits) -> dict[str, int | None]:

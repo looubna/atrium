@@ -44,7 +44,7 @@ from app.platform.jobs.module_tasks import enqueue_module_task
 from app.platform.runtime_config import ai_enabled
 from app.platform.storage.objects import user_content
 from app.platform.storage.paths import StoragePaths
-from app.platform.users import ConsentKind, require_consents
+from app.platform.users import ConsentKind, plan_limits, require_consents
 
 log = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ async def create_preparation(body: PreparationCreate, user: current_user) -> dic
     await require_consents(user, ConsentKind.AI_PROCESSING)
     if not await ai_enabled():
         raise ServiceUnavailable()
+    await plan_limits(user)  # refuses once a free account's trial minutes are used up
 
     prep_id = client_uuid(body.id)
     db, paths = clients.firestore(), UserPaths(user.uid)

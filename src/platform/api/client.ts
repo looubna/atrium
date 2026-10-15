@@ -68,11 +68,25 @@ async function send(path: string, options: RequestOptions, forceRefresh: boolean
   return fetch(`${env.apiBaseUrl}/api/v1${path}`, { method: options.method ?? 'GET', headers, body, signal: options.signal })
 }
 
+/**
+ * A free account whose trial minutes are used up is refused any new practice (`trial_used`), from
+ * whichever room asked. The paywall registers here, so every room shows it without handling it itself.
+ */
+let trialUsedHandler: (() => void) | null = null
+
+export function onTrialUsed(handler: () => void): void {
+  trialUsedHandler = handler
+}
+
 async function parse<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T
   const text = await response.text()
   const data = text ? (JSON.parse(text) as unknown) : undefined
-  if (!response.ok) throw new ApiError(response.status, (data ?? {}) as Record<string, unknown>)
+  if (!response.ok) {
+    const error = new ApiError(response.status, (data ?? {}) as Record<string, unknown>)
+    if (error.code === 'trial_used') trialUsedHandler?.()
+    throw error
+  }
   return data as T
 }
 

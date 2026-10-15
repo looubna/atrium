@@ -20,7 +20,7 @@ from app.core.settings import get_settings
 from app.platform.auth.dependencies import AuthUser, current_user
 from app.platform.clients import clients
 from app.platform.firestore.paths import UserPaths
-from app.platform.plans import PlanId, PlanLimits, limits_for
+from app.platform.plans import PlanId, PlanLimits, limits_for, live_minutes
 from app.platform.usage import Period, UsageService
 
 log = logging.getLogger(__name__)
@@ -127,7 +127,22 @@ def effective_plan(data: dict[str, Any], now: datetime | None = None) -> PlanId:
     return plan
 
 
-async def plan_limits(user: AuthUser) -> tuple[PlanId, PlanLimits]:
+class TrialUsed(Forbidden):
+    code = "trial_used"
+    title = "Your free minutes are used up"
+
+
+#: Less than this left of the trial counts as used up: the live gateway refuses a session under it too.
+TRIAL_LEFT_MIN_SECONDS = 30
+
+
+async def plan_limits(user: AuthUser, *, practice: bool = True) -> tuple[PlanId, PlanLimits]:
+    """The account's plan and limits.
+
+    `practice` (the default): the caller is about to start or prepare practice, so a free account whose
+    trial minutes are used up is refused (`TrialUsed`; the app opens the paywall). Only callers that just
+    show or check the limits pass `practice=False`.
+    """
     from app.platform.trial import trial_allowed
 
     data = await ensure_user(user)
@@ -136,6 +151,11 @@ async def plan_limits(user: AuthUser) -> tuple[PlanId, PlanLimits]:
     # One trial per person: a free account whose trial check said no has no free minutes (plans are unaffected).
     if limits.trial_minutes_total is not None and not trial_allowed(data):
         limits = replace(limits, trial_minutes_total=0, live_minutes_month=0)
+    # After the trial's minutes, no practice of any kind until a plan: not only the live rooms.
+    if practice and limits.trial_minutes_total is not None:
+        left = (await live_minutes(clients.firestore(), user.uid, limits))["leftSeconds"] or 0
+        if left < TRIAL_LEFT_MIN_SECONDS:
+            raise TrialUsed()
     return plan, limits
 
 
@@ -218,7 +238,7 @@ async def set_consent(kind: Annotated[ConsentKind, Path()], body: ConsentUpdate,
 
 @router.get("/usage", response_model=UsageView)
 async def get_usage(user: current_user) -> UsageView:
-    plan, limits = await plan_limits(user)
+    plan, limits = await plan_limits(user, practice=False)
     usage = UsageService(clients.firestore())
     return UsageView(
         plan=plan,

@@ -278,6 +278,8 @@ function describeSetupProblem(error: unknown): SetupProblem {
         return { text: 'Verify your email address, then try again.', account: true }
       case 'account_deleting':
         return { text: 'This account is being deleted.' }
+      case 'trial_used':
+        return { text: 'Your free minutes are used up. Choose a plan to keep practising.' }
       case 'quota_exceeded':
         return { text: "You've reached today's practice limit. It resets tomorrow." }
       case 'rate_limited':

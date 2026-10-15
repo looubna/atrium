@@ -663,7 +663,8 @@ class LiveGateway:
 
         if effective_plan(user_data) is PlanId.FREE and not user_data.get("trial"):
             await self._decide_trial()
-        _, limits = await plan_limits(self.user)
+        # Its own minutes check below closes with QUOTA, which the app answers with the paywall.
+        _, limits = await plan_limits(self.user, practice=False)
         # The free trial's lifetime minutes, or the paid plan's month (and day, for fair use).
         self.quota_remaining_ms = int((await live_minutes(self.db, self.uid, limits))["leftSeconds"] or 0) * 1000
         if self.quota_remaining_ms < 30_000:

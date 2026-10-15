@@ -41,12 +41,12 @@ module "platform" {
   ]
 
   app_config = {
-    LIVE_MODEL              = "gemini-live-2.5-flash-native-audio"
-    LIVE_LOCATION           = "us-central1"
-    TEXT_MODEL              = "gemini-3.8-flash"
-    TEXT_LOCATION           = "global"
-    SPEECH_LOCATION         = "us"
-    FREE_TRIAL_MINUTES      = "20" # live minutes a free account gets once
+    LIVE_MODEL         = "gemini-live-2.5-flash-native-audio"
+    LIVE_LOCATION      = "us-central1"
+    TEXT_MODEL         = "gemini-3.8-flash"
+    TEXT_LOCATION      = "global"
+    SPEECH_LOCATION    = "us"
+    FREE_TRIAL_MINUTES = "20" # live minutes a free account gets once
   }
 }
 

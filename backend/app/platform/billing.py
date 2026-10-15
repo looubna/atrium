@@ -125,7 +125,7 @@ class BillingStatus(BaseModel):
 async def status(user: current_user) -> BillingStatus:
     """What the paywall and the account sheet show: the plan and the live minutes left."""
     data = await ensure_user(user)
-    plan, limits = await plan_limits(user)
+    plan, limits = await plan_limits(user, practice=False)
     minutes = await live_minutes(clients.firestore(), user.uid, limits)
     subscription = PlanId(data["plan"]) if data.get("plan") in set(PlanId) else PlanId.FREE
     today = minutes["todayLeftSeconds"]

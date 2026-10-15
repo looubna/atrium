@@ -44,6 +44,7 @@ function startProblem(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === 'consent_required') return 'Allow recording and AI processing in your account first.'
     if (error.code === 'email_not_verified') return 'Verify your email address, then try again.'
+    if (error.code === 'trial_used') return 'Your free minutes are used up. Choose a plan to keep practising.'
     if (error.code === 'quota_exceeded') return "You've reached today's practice limit."
     if (error.code === 'rate_limited') return 'Too many conversations in a row. Try again in a few minutes.'
     if (error.status === 503) return 'Conversations are unavailable right now. Try again later.'

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import { cn } from '@/lib/utils'
 import { getBillingStatus, PLAN_NAMES, redeemCode, syncBilling, type BillingStatus, type PlanId } from '@/modules/billing/api'
-import { ApiError } from '@/platform/api/client'
+import { ApiError, onTrialUsed } from '@/platform/api/client'
 import { firebase } from '@/platform/firebase'
 import {
   canPurchase,
@@ -23,6 +23,9 @@ export const usePaywall = create<{ open: Reason | null; show: (reason: Reason) =
   show: (reason) => set({ open: reason }),
   close: () => set({ open: null }),
 }))
+
+// Any room refused because the free minutes are used up opens the paywall.
+onTrialUsed(() => usePaywall.getState().show('minutes'))
 
 /**
  * The plans, in the store's own order. Minutes are the server's (`backend/app/platform/plans.py`);

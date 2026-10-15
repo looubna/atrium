@@ -39,7 +39,7 @@ async def may_go_live(user: AuthUser) -> bool:
     """Whether this account could start a live session now (the gateway's own checks)."""
     if not user.verified_for_ai:
         return False
-    _, limits = await plan_limits(user)
+    _, limits = await plan_limits(user, practice=False)
     return int((await live_minutes(clients.firestore(), user.uid, limits))["leftSeconds"] or 0) >= MIN_LIVE_SECONDS
 
 

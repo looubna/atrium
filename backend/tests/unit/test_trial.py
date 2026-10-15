@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -41,7 +42,7 @@ async def _limits(monkeypatch: pytest.MonkeyPatch, data: dict[str, Any]) -> tupl
         return data
 
     monkeypatch.setattr(users, "ensure_user", ensure)
-    return await users.plan_limits(USER)
+    return await users.plan_limits(USER, practice=False)
 
 
 async def test_a_refused_trial_only_removes_free_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,3 +104,42 @@ def test_the_walk_in_is_neither_billed_nor_taken_from_the_minutes(monkeypatch: p
     monkeypatch.setattr(live_gateway.time, "monotonic", lambda: 125.0)  # sat down 25 s after connecting
     gateway._credit_walk_in()
     assert gateway.usage_seconds_recorded == 25 and gateway.quota_remaining_ms == 85_000
+
+
+async def test_once_the_free_minutes_are_used_no_practice_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    left = {"seconds": 0}
+
+    async def ensure(user: AuthUser) -> dict[str, Any]:
+        return {"plan": "free"}
+
+    async def minutes(db: Any, uid: str, limits: Any) -> dict[str, int | None]:
+        return {"leftSeconds": left["seconds"]}
+
+    monkeypatch.setattr(users, "ensure_user", ensure)
+    monkeypatch.setattr(users, "live_minutes", minutes)
+    monkeypatch.setattr(users.clients, "firestore", lambda: None)
+
+    with pytest.raises(users.TrialUsed):
+        await users.plan_limits(USER)  # every room, drill and preparation starts here
+    left["seconds"] = 29  # under what a live session needs: used up too
+    with pytest.raises(users.TrialUsed):
+        await users.plan_limits(USER)
+    # Showing the plan, the paywall or a past session's feedback still works.
+    plan, _ = await users.plan_limits(USER, practice=False)
+    assert plan is PlanId.FREE
+    left["seconds"] = 600
+    assert (await users.plan_limits(USER))[0] is PlanId.FREE
+
+
+async def test_paid_and_promo_accounts_are_never_stopped_by_the_trial(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def minutes(db: Any, uid: str, limits: Any) -> dict[str, int | None]:
+        raise AssertionError("a paid plan never looks at the trial")
+
+    monkeypatch.setattr(users, "live_minutes", minutes)
+    for data in ({"plan": "pro"}, {"plan": "internal"},
+                 {"plan": "free", "promoPlan": "pro", "promoUntil": datetime.now(UTC) + timedelta(days=3)}):
+        async def ensure(user: AuthUser, data: dict[str, Any] = data) -> dict[str, Any]:
+            return data
+
+        monkeypatch.setattr(users, "ensure_user", ensure)
+        await users.plan_limits(USER)

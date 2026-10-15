@@ -74,6 +74,8 @@ function describeProblem(error: unknown): SetupProblem {
         return { text: 'Allow recording and AI processing in your account first.', account: true }
       case 'email_not_verified':
         return { text: 'Verify your email address, then try again.', account: true }
+      case 'trial_used':
+        return { text: 'Your free minutes are used up. Choose a plan to keep practising.' }
       case 'quota_exceeded':
         return { text: "You've reached today's practice limit. It resets tomorrow." }
       case 'rate_limited':

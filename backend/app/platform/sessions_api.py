@@ -154,7 +154,8 @@ async def reprocess(
     data = await _session(user.uid, session_id)
     if data.get("processingStatus") not in (ProcessingStatus.FAILED.value, ProcessingStatus.COMPLETED.value):
         raise Conflict("this session is not ready to be processed again")
-    _, limits = await plan_limits(user)
+    # Feedback on a session already held, not new practice: allowed after the trial too.
+    _, limits = await plan_limits(user, practice=False)
     await UsageService(clients.firestore()).reserve(
         user.uid, Metric.REPROCESS, 1, limit=limits.reprocess_day, period=Period.DAY
     )
