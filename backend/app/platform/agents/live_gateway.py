@@ -775,10 +775,10 @@ class LiveGateway:
 
     def _credit_walk_in(self) -> None:
         """Connected early (on the way in) and only now sitting down: that walk is not the candidate's
-        talk time. It is left out of the minutes billed (the meter skips that many seconds) and given
-        back to what they may still use; nothing was said to the model meanwhile."""
+        talk time. Nothing was billed for it (`_persist` skips the walk), the meter starts now, and the
+        walk is given back to what they may still use; nothing was said to the model meanwhile."""
         held_s = max(0, int(time.monotonic() - self.connected_at))
-        self.usage_seconds_recorded += held_s
+        self.usage_seconds_recorded = held_s
         self.quota_remaining_ms += held_s * 1000
 
     async def _decide_trial(self) -> None:
@@ -1730,7 +1730,9 @@ class LiveGateway:
         await self.db.document(live_session_path(self.session_id)).set(self.state.to_doc(), merge=True)
 
         seconds_now = (time.monotonic() - self.connected_at)
-        delta_seconds = int(seconds_now - self.usage_seconds_recorded)
+        # Still on the way in (connected early, not sat down): the walk is not billed.
+        walking = self.pending_opening is not None
+        delta_seconds = 0 if walking else max(0, int(seconds_now - self.usage_seconds_recorded))
         values = {Metric.LIVE_SECONDS: delta_seconds, Metric.AI_TOKENS: self.pending_tokens}
         settings = get_settings()
         cost = token_cost_micros(
