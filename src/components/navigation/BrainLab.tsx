@@ -1,3 +1,4 @@
+import { isTrialUsed, TRIAL_USED_MESSAGE } from '@/platform/api/client'
 import { type MutableRefObject, useEffect, useRef, useState } from 'react'
 import { PRACTICE_FORMATS } from '@/data/practice'
 import { clock, useCountdown } from '@/lib/useCountdown'
@@ -83,9 +84,9 @@ function Consultation({ minutes, onLeave }: { minutes: number; onLeave: () => vo
     useConversationLoading.getState().set(true)
     createBrainSession(focus, own, minutes, window.innerWidth > window.innerHeight)
       .then(({ id }) => !unmounted.current && setSessionId(id))
-      .catch(() => {
+      .catch((error: unknown) => {
         useConversationLoading.getState().set(false)
-        if (!unmounted.current) setNote('The consultation could not start. Check your connection.')
+        if (!unmounted.current) setNote(isTrialUsed(error) ? TRIAL_USED_MESSAGE : 'The consultation could not start. Check your connection.')
       })
   }
 

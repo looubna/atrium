@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { sayNative } from '@/modules/language/api'
-import { ApiError } from '@/platform/api/client'
+import { ApiError, isTrialUsed, TRIAL_USED_MESSAGE } from '@/platform/api/client'
 import { cn } from '@/lib/utils'
 import { IconArrowLeft } from '../ui/Icon'
 
@@ -100,6 +100,7 @@ async function say(clean: string, lang: string, rate: number): Promise<void> {
 /** A message for a failed request, in words the learner can act on. */
 export function problem(error: unknown): string {
   if (error instanceof ApiError) {
+    if (isTrialUsed(error)) return TRIAL_USED_MESSAGE
     if (error.status === 429) return "You've reached today's limit. Try again later."
     if (error.status === 403) return 'Verify your email and accept AI processing in your account first.'
     return error.detail ?? error.message

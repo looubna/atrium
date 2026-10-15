@@ -1,3 +1,4 @@
+import { isTrialUsed, TRIAL_USED_MESSAGE } from '@/platform/api/client'
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { EMOTIONAL_SCENARIOS, type EmotionalPartner, type EmotionalScenario } from '@/data/practice'
 import { clock, useCountdown } from '@/lib/useCountdown'
@@ -183,9 +184,9 @@ function Conversation({ partner, scenario, topic, minutes, onLeave, onFeedback }
     useConversationLoading.getState().set(true)
     createEmotionalSession(partner, scenario, minutes, landscape, ownSituation)
       .then(({ id }) => !unmounted.current && setSessionId(id))
-      .catch(() => {
+      .catch((error: unknown) => {
         useConversationLoading.getState().set(false)
-        if (!unmounted.current) setNote('The conversation could not start. Check your connection.')
+        if (!unmounted.current) setNote(isTrialUsed(error) ? TRIAL_USED_MESSAGE : 'The conversation could not start. Check your connection.')
       })
   }
 

@@ -1,3 +1,4 @@
+import { isTrialUsed, TRIAL_USED_MESSAGE } from '@/platform/api/client'
 import { useEffect, useRef, useState } from 'react'
 import { clock, useCountdown } from '@/lib/useCountdown'
 import { cn } from '@/lib/utils'
@@ -96,9 +97,9 @@ function Conversation({ area, minutes, onLeave, onFeedback }: {
     useConversationLoading.getState().set(true)
     createCafeSession(scenario.id, own, minutes, window.innerWidth > window.innerHeight)
       .then(({ id }) => !unmounted.current && setSessionId(id))
-      .catch(() => {
+      .catch((error: unknown) => {
         useConversationLoading.getState().set(false)
-        if (!unmounted.current) setNote('The conversation could not start. Check your connection.')
+        if (!unmounted.current) setNote(isTrialUsed(error) ? TRIAL_USED_MESSAGE : 'The conversation could not start. Check your connection.')
       })
   }
 

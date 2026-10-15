@@ -74,6 +74,11 @@ async function send(path: string, options: RequestOptions, forceRefresh: boolean
  */
 let trialUsedHandler: (() => void) | null = null
 
+/** What a room says under the paywall, instead of a misleading "check your connection". */
+export const TRIAL_USED_MESSAGE = 'Your free minutes are used up. Choose a plan to keep practising.'
+
+export const isTrialUsed = (error: unknown): boolean => error instanceof ApiError && error.code === 'trial_used'
+
 export function onTrialUsed(handler: () => void): void {
   trialUsedHandler = handler
 }
