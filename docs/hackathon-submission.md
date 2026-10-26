@@ -107,8 +107,8 @@ Manager. Never add either value to the repository.
 ## Before submitting
 
 - Publish the source repository with the MIT license visible on the repository
-  page. The target GitHub repository is currently private and empty; `origin` is
-  configured locally, but no source has been pushed yet.
+  page. The target repository now contains the source on `main`, but it is still
+  private; change its visibility to public before submitting.
 - Deploy an accessible demo and confirm the public demo's backend has the
   Token Factory variables above.
 - Upload `Atrium-Nebius-Hackathon-Demo.mp4` to YouTube as a public video (it is 2:14
