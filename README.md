@@ -12,6 +12,41 @@ get timestamped feedback, competency progress and targeted retries.
 
 The sections below describe the 3D experience and front-end decisions.
 
+## Nebius x NVIDIA Global AI Hackathon
+
+**Recommended track: Best Apps & Agents.** Atrium is a usable interview-preparation
+product: it researches a candidate's target company and role, builds a likely
+interview journey, runs a live voice simulation, and turns the recording into
+timestamped, evidence-based coaching and retry practice.
+
+The hackathon build adds NVIDIA Nemotron 3.5 Lightning through Nebius Token Factory
+for the interview blueprint, resume profile, and written round-preparation guide.
+The provider and model are reported in backend usage logs and shown in the app next
+to Nemotron-generated interview materials. Existing Gemini Live voice, Google Search
+grounding, and audio/video evaluation remain in place for the capabilities they
+already serve. Token Factory's hosted inference API means Atrium can use Nemotron
+without provisioning or operating model-serving GPUs, so development can focus on
+the interview flow, validated coaching materials, and the user experience. The app
+backend calls the model through Nebius Token Factory; the existing Firebase, Google
+Cloud, and Cloudflare services still handle account/data storage, live voice, and
+media workflows. The Token Factory API key is read only by the backend.
+
+For schema-constrained JSON calls, Atrium disables Nemotron's default reasoning
+trace so it cannot consume the response budget before usable JSON is returned.
+The server validates each response against its typed schema and retries once to
+repair invalid JSON. It also replaces the model's free-form sample anecdotes with
+STAR fill-in templates and includes only resume facts that match verbatim, so a
+plausible but unsupported action or result is not presented as the candidate's story.
+
+Set `NEBIUS_TEXT_ENABLED=true` and `NEBIUS_API_KEY` in the backend environment to
+enable this path. See [local/cloud setup](docs/setup.md) and the
+[hackathon submission notes](docs/hackathon-submission.md). The repository uses the
+[MIT License](LICENSE).
+
+A live synthetic Token Factory request now returns visible, schema-valid Nemotron
+output. The project has not yet been verified as a deployed end-to-end demo. Never
+put a Token Factory API key or promo code in the frontend, README, or source control.
+
 ```bash
 npm install
 npm run dev             # http://localhost:5173
@@ -21,8 +56,8 @@ npm run preview:mobile  # production build + service worker, on the LAN
 npm run typecheck
 ```
 
-Requires Node 20+. A `.nvmrc` pins 22 for convenience; the toolchain is pinned
-to Vite 6 so it also runs on Node 20.11.
+Requires Node.js 22 (see `.nvmrc`). The Cloudflare Vite plugin used by the production
+build does not load under Node 20.11.
 
 ---
 

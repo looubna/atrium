@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     ai_provider: AiProvider = AiProvider.VERTEX
+    # The hackathon integration is deliberately additive: company-specific interview plans and
+    # preparation guides can use Nemotron on Token Factory while Gemini Live and grounded search
+    # continue to use the existing Vertex configuration.
+    nebius_text_enabled: bool = False
+    nebius_api_key: SecretStr = SecretStr("")
+    nebius_base_url: str = "https://api.tokenfactory.nebius.com/v1"
+    nebius_text_model: str = "nvidia/Nemotron-3_5-Lightning"
+    # Public Token Factory rates for Nemotron 3.5 Lightning as of October 2026 ($0.06/$0.24 per 1M tokens).
+    nebius_input_micros_per_m: int | None = Field(default=60_000, ge=0)
+    nebius_output_micros_per_m: int | None = Field(default=240_000, ge=0)
     live_model: str = "gemini-live-2.5-flash-native-audio"
     live_location: str = "us-central1"
     text_model: str = "gemini-3.8-flash"
@@ -147,6 +157,11 @@ class Settings(BaseSettings):
             return [o.strip() for o in value.split(",") if o.strip()]
         return value
 
+    @field_validator("nebius_base_url")
+    @classmethod
+    def _clean_nebius_base_url(cls, value: str) -> str:
+        return value.strip().rstrip("/")
+
     @property
     def ai_project(self) -> str:
         return self.vertex_project or self.google_cloud_project
@@ -173,6 +188,9 @@ class Settings(BaseSettings):
         if self.ai_provider is AiProvider.VERTEX:
             if self.ai_project not in AI_PROJECTS[self.app_env]:
                 raise ValueError(f"APP_ENV={self.app_env} may not bill AI calls to {self.ai_project!r}")
+        if self.nebius_text_enabled and self.ai_provider is not AiProvider.FAKE:
+            if not self.nebius_api_key.get_secret_value():
+                raise ValueError("NEBIUS_API_KEY is required when NEBIUS_TEXT_ENABLED is true")
         if self.app_env is Env.PROD:
             if self.ai_provider is not AiProvider.VERTEX:
                 raise ValueError("production must use the Vertex AI provider")

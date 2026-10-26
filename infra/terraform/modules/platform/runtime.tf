@@ -85,10 +85,26 @@ resource "google_secret_manager_secret_iam_member" "livetalking_secret" {
 # as `revenuecat-api-key` and `revenuecat-webhook-secret`, created and rotated outside Terraform (their
 # values never pass through Terraform state). Only the API reads them. Off until revenuecat_enabled.
 locals {
+  # The Token Factory key is created and rotated outside Terraform so its value never enters state.
+  # Enable access only when this environment's non-secret app config opts into the Nebius path.
+  nebius_text_enabled = lower(try(var.app_config["NEBIUS_TEXT_ENABLED"], "false")) == "true"
+  nebius_service_accounts = local.nebius_text_enabled ? {
+    api    = google_service_account.api.member
+    worker = google_service_account.worker.member
+  } : {}
+
   billing_secrets = var.revenuecat_enabled ? {
     "revenuecat-api-key"        = "REVENUECAT_API_KEY"
     "revenuecat-webhook-secret" = "REVENUECAT_WEBHOOK_SECRET"
   } : {}
+}
+
+resource "google_secret_manager_secret_iam_member" "nebius" {
+  for_each  = local.nebius_service_accounts
+  project   = var.project_id
+  secret_id = "nebius-api-key"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = each.value
 }
 
 resource "google_secret_manager_secret_iam_member" "billing" {
@@ -216,6 +232,19 @@ resource "google_cloud_run_v2_service" "worker" {
           }
         }
       }
+
+      dynamic "env" {
+        for_each = local.nebius_text_enabled ? { "nebius-api-key" = "NEBIUS_API_KEY" } : {}
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = env.key
+              version = "latest"
+            }
+          }
+        }
+      }
     }
   }
 
@@ -231,6 +260,7 @@ resource "google_cloud_run_v2_service" "worker" {
   depends_on = [
     google_project_service.enabled,
     google_secret_manager_secret_iam_member.analytics_salt,
+    google_secret_manager_secret_iam_member.nebius,
     google_storage_bucket_iam_member.worker_user_content,
     google_storage_bucket_iam_member.worker_processing,
   ]
@@ -316,6 +346,18 @@ resource "google_cloud_run_v2_service" "api" {
           }
         }
       }
+      dynamic "env" {
+        for_each = local.nebius_text_enabled ? { "nebius-api-key" = "NEBIUS_API_KEY" } : {}
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = env.key
+              version = "latest"
+            }
+          }
+        }
+      }
     }
   }
 
@@ -331,6 +373,7 @@ resource "google_cloud_run_v2_service" "api" {
     google_project_service.enabled,
     google_secret_manager_secret_iam_member.analytics_salt,
     google_secret_manager_secret_iam_member.livetalking_secret,
+    google_secret_manager_secret_iam_member.nebius,
   ]
 }
 

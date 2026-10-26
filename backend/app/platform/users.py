@@ -26,7 +26,7 @@ from app.platform.usage import Period, UsageService
 log = logging.getLogger(__name__)
 
 # Bump when the consent text shown in the app changes; users re-consent.
-CURRENT_CONSENT_VERSION = "2026-09-15"
+CURRENT_CONSENT_VERSION = "2026-10-24"
 
 
 class ConsentKind(StrEnum):

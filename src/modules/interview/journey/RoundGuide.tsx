@@ -115,7 +115,7 @@ export function QuestionItem({ item, index }: { item: Guide['questions'][number]
                 className="text-[11.5px] font-medium text-jade-400 underline-offset-2 hover:underline"
                 aria-expanded={showAnswer}
               >
-                {showAnswer ? 'Hide the sample answer' : 'Show a sample answer'}
+                {showAnswer ? 'Hide answer template' : 'Show a grounded answer template'}
               </button>
               {showAnswer && (
                 <blockquote className="anim-fade mt-1.5 rounded-lg border-l-2 border-jade-400/60 bg-black/20 px-2.5 py-2 italic text-chalk/90">
@@ -149,6 +149,17 @@ export function GuideView({ guide }: { guide: Guide }) {
   ]
   return (
     <div>
+      {guide.modelAttribution?.provider === 'Nebius Token Factory' && (
+        <div className="mb-3 flex items-center gap-2 rounded-xl border border-[#76b900]/25 bg-[#76b900]/8 px-3 py-2 text-[10.5px] text-chalk">
+          <span className="rounded-md bg-[#76b900]/15 px-1.5 py-0.5 font-semibold tracking-wide text-[#b6e36b]">
+            NEMOTRON
+          </span>
+          <span>
+            Built with NVIDIA Nemotron on Nebius Token Factory
+            <span className="ml-1 text-faint">· {guide.modelAttribution.model}</span>
+          </span>
+        </div>
+      )}
       {guide.approach && (
         <div className="flex gap-2 rounded-xl border border-jade-400/20 bg-jade-500/8 px-3 py-2.5">
           <IconTarget width={15} height={15} className="mt-0.5 shrink-0 text-jade-400" />

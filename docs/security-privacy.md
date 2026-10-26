@@ -30,9 +30,9 @@ compliance; privacy policy, terms and regulatory review are separate work.
 | Email, sign-in provider | account | Firebase Auth | — | until account deletion |
 | Display name | account | Firestore | — | until account deletion |
 | Consents (what, version, when) | lawful processing, App Store 5.1.2(i) | Firestore | — | until account deletion |
-| Resume file and extracted text | interview journey | Cloud Storage | Google Cloud AI (Gemini) for the profile | until deleted by the user |
+| Resume file and extracted text | interview journey | Cloud Storage | Google Cloud AI (Gemini) and, in the hackathon build, Nebius Token Factory (Nemotron) for the profile | until deleted by the user |
 | Resume profile | interview journey | Firestore | — | until deleted |
-| Company, role, location, job description | interview journey | Firestore | Google Cloud AI (Gemini, Google Search grounding with company and role) | until deleted |
+| Company, role, location, job description | interview journey | Firestore | Google Cloud AI (Gemini, Google Search grounding with company and role) and, in the hackathon build, Nebius Token Factory (Nemotron) for the blueprint and written guide | until deleted |
 | Voice during interviews | live interviewer, feedback | Cloud Storage (tracks, `audio.m4a`) | Google Cloud AI (Gemini Live, Speech-to-Text) | 365 days |
 | Camera video (only when the camera is on) | reviewing your delivery | Cloud Storage (`video-*`) | Google Cloud AI (Gemini: whole video at low resolution, flagged body-language moments as short high-resolution clips) only with the separate `video_analysis` consent | 365 days |
 | Face measurements (per second: face visible, looking at camera or, in person, at the interviewers, smiling, head movement, and for in-person panels turned toward the speaker) | eye contact, expression and composure feedback | Cloud Storage (`face-metrics.json`); computed on the device from camera frames, which never leave it | — | 365 days, deleted with recordings |
@@ -47,8 +47,12 @@ compliance; privacy policy, terms and regulatory review are separate work.
 | Analytics events | product analytics | BigQuery (hashed uid) | — | 400 days |
 
 AI processing uses Google Cloud Vertex AI and Speech-to-Text under the project's
-Google Cloud terms. Review those terms (including data use and residency) for your
-agreement and describe them in the privacy policy.
+Google Cloud terms. In the hackathon dev build, the written interview blueprint,
+resume profile and round-preparation guide also send the relevant resume text and
+role details to Nebius Token Factory for NVIDIA Nemotron inference. Recordings,
+transcripts and video are not sent to Nebius by this integration. Review and link the
+applicable Google and Nebius service terms in the privacy policy before enabling the
+feature for users.
 
 Consent is requested before the first AI feature (`ai_processing`) and before any
 recording (`recording`). The consent text version is stored; a new version requires

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from app.modules.interview.catalogs import ROUND_LABELS, parse_round_type
 from app.modules.interview.retry import competency_name
 from app.modules.interview.sanitize import clean_list, clean_phrase, clean_text
-from app.platform.ai.gateway import Purpose, gateway
+from app.platform.ai.gateway import Purpose, gateway, nebius_attribution
 from app.platform.transcripts.model import normalize
 
 MAX_QUESTIONS = 12
@@ -34,8 +34,8 @@ class PrepQuestionDraft(BaseModel):
     assesses: str = Field(description="What the interviewer learns from the answer, one sentence")
     outline: list[str] = Field(description="3 to 5 short steps for structuring a strong answer")
     sampleAnswer: str = Field(
-        description="A strong answer in the candidate's voice, 70 to 130 words, using only facts from the "
-        "resume profile; details the resume does not give are written as [bracketed placeholders]"
+        description="A fill-in STAR answer template. Do not invent candidate actions, employers, metrics, "
+        "or outcomes; use [bracketed placeholders] for details not explicitly in the resume profile."
     )
     resumeHook: str = Field(description="Which experience from the resume to use, or empty when none fits")
     pitfalls: list[str] = Field(description="Up to 3 common mistakes")
@@ -132,6 +132,36 @@ def reported_texts(round_doc: dict[str, Any]) -> list[str]:
     )
 
 
+def _resume_facts(resume_profile: dict[str, Any] | None) -> list[str]:
+    """Extract verbatim candidate facts; generated summaries are intentionally excluded."""
+    if not resume_profile:
+        return []
+    facts: list[str] = []
+    achievements = resume_profile.get("achievements", [])
+    if isinstance(achievements, list):
+        facts.extend(clean_text(str(item), 300) for item in achievements if str(item).strip())
+    roles = resume_profile.get("roles", [])
+    if isinstance(roles, list):
+        for role in roles:
+            if not isinstance(role, dict):
+                continue
+            highlights = role.get("highlights", [])
+            if isinstance(highlights, list):
+                facts.extend(clean_text(str(item), 300) for item in highlights if str(item).strip())
+    return list(dict.fromkeys(fact for fact in facts if fact))
+
+
+def _answer_template(resume_hook: str) -> str:
+    """Build a safe STAR template instead of trusting unverified generated anecdotes."""
+    evidence = f'One exact resume fact: “{resume_hook}” ' if resume_hook else ""
+    return (
+        f"{evidence}Fill in only details you can verify. Situation: [describe the real context and problem]. "
+        "Task: [state what you personally owned]. Action: [describe steps you actually took; mention research, "
+        "testing, or collaboration only if accurate]. Result: [explain the outcome and how it was measured; "
+        "use only metrics you can support]."
+    )
+
+
 def fake_guide(round_doc: dict[str, Any]) -> PrepGuideDraft:
     title = str(round_doc.get("title", "this round"))
     reported = reported_texts(round_doc)
@@ -154,8 +184,15 @@ def fake_guide(round_doc: dict[str, Any]) -> PrepGuideDraft:
     )
 
 
-def validate_guide(draft: PrepGuideDraft, round_doc: dict[str, Any], sources: dict[str, str]) -> dict[str, Any]:
+def validate_guide(
+    draft: PrepGuideDraft,
+    round_doc: dict[str, Any],
+    sources: dict[str, str],
+    resume_profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """The stored guide: cleaned, capped, and with reported questions only where the journey reported them."""
+    facts = _resume_facts(resume_profile)
+    facts_by_normalized_text = {normalize(fact): fact for fact in facts}
     reported = {
         normalize(str(q.get("text", ""))): [sources.get(str(s), str(s)) for s in q.get("sourceIds", [])]
         for q in round_doc.get("reportedQuestions", []) if isinstance(q, dict)
@@ -169,14 +206,17 @@ def validate_guide(draft: PrepGuideDraft, round_doc: dict[str, Any], sources: di
             continue
         seen.add(key)
         is_reported = key in reported
+        resume_hook = facts_by_normalized_text.get(normalize(q.resumeHook), "") if q.resumeHook else ""
         questions.append({
             "question": text,
             "reported": is_reported,
             "sources": clean_list(reported.get(key, []), max_items=4) if is_reported else [],
             "assesses": clean_text(q.assesses, 300),
             "outline": clean_list(q.outline, max_items=5, max_chars=200),
-            "sampleAnswer": clean_text(q.sampleAnswer, 1_200),
-            "resumeHook": clean_text(q.resumeHook, 200),
+            # The model's free-form anecdote may add plausible but unsupported details.
+            # Keep the verbatim resume fact and build a fill-in template deterministically.
+            "sampleAnswer": _answer_template(resume_hook),
+            "resumeHook": resume_hook,
             "pitfalls": clean_list(q.pitfalls, max_items=3, max_chars=200),
         })
         if len(questions) >= MAX_QUESTIONS:
@@ -213,4 +253,8 @@ async def write_guide(
         fake=lambda: fake_guide(round_doc),
     )
     sources = {str(s.get("id")): str(s.get("domain", "")) for s in blueprint.get("sources", []) if isinstance(s, dict)}
-    return validate_guide(draft, round_doc, sources)
+    guide = validate_guide(draft, round_doc, sources, resume_profile)
+    attribution = nebius_attribution(Purpose.ROUND_PREP)
+    if attribution:
+        guide["modelAttribution"] = attribution
+    return guide

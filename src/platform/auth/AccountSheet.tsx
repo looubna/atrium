@@ -43,7 +43,7 @@ const CONSENT_COPY: Record<ConsentKind, { title: string; body: string }> = {
   },
   ai_processing: {
     title: 'Process my materials with AI',
-    body: 'Your resume, job details, recordings and transcripts are sent to Google Cloud AI services to run the interviewer and generate feedback. They are not used to train models.',
+    body: 'Your resume text, role details and interview-preparation materials may be sent to Nebius Token Factory (NVIDIA Nemotron) to build your interview journey and written guide. Live voice, transcripts, recordings and optional camera-video analysis continue to use Google Cloud AI. See our privacy policy for details.',
   },
   video_analysis: {
     title: 'Analyse my camera video with AI',

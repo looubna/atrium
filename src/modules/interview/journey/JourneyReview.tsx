@@ -470,6 +470,11 @@ export function JourneyReview({
         )}
       </div>
       {blueprint.processSummary && <p className="mt-1 text-[11.5px] leading-relaxed text-mist">{blueprint.processSummary}</p>}
+      {blueprint.modelAttribution?.provider === 'Nebius Token Factory' && (
+        <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[#76b900]/25 bg-[#76b900]/8 px-2 py-1 text-[10px] font-medium text-[#b6e36b]">
+          NVIDIA Nemotron · Nebius Token Factory
+        </div>
+      )}
 
       {editing ? (
         <EditPanel

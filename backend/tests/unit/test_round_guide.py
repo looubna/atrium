@@ -52,6 +52,36 @@ def test_a_guide_without_questions_is_rejected() -> None:
         validate_guide(draft(), ROUND, {})
 
 
+def test_answer_template_discards_unverified_model_anecdotes() -> None:
+    fact = "Checkout completion rose 8% after redesign."
+    drafted = question("Tell me about a time you improved a user flow.", False).model_copy(
+        update={
+            "resumeHook": fact,
+            "sampleAnswer": (
+                "I simplified the payment form, tested it with five users, and improved completion by 8%."
+            ),
+        }
+    )
+    guide = validate_guide(draft(drafted), ROUND, {}, {"achievements": [fact]})
+
+    answer = guide["questions"][0]["sampleAnswer"]
+    assert guide["questions"][0]["resumeHook"] == fact
+    assert fact in answer
+    assert "tested it with five users" not in answer
+    assert "simplified the payment form" not in answer
+    assert "only if accurate" in answer
+
+
+def test_unverified_resume_hook_is_not_attributed_to_the_resume() -> None:
+    drafted = question("Tell me about a time you improved a user flow.", False).model_copy(
+        update={"resumeHook": "Tested the redesign with five users."}
+    )
+    guide = validate_guide(draft(drafted), ROUND, {}, {"achievements": ["Checkout completion rose 8%."]})
+
+    assert guide["questions"][0]["resumeHook"] == ""
+    assert "Tested the redesign with five users." not in guide["questions"][0]["sampleAnswer"]
+
+
 def test_the_writer_sees_the_job_resume_research_and_round_as_data() -> None:
     content = guide_content(
         {"company": "Acme", "roleTitle": "PM", "jobDescription": "Own the roadmap."},

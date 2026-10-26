@@ -56,3 +56,9 @@ xcuserdata/
 
 # Android Firebase config (same policy as GoogleService-Info.plist)
 google-services.json
+
+# Local investor material (not part of the public hackathon source)
+/Atrium_Venture_Overview.pdf
+
+work/atrium-nebius-demo.json
+work/atrium-nebius-guide.json

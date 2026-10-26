@@ -18,7 +18,7 @@
 </header>
 <main class="doc">
 <h1>Atrium Privacy Policy &amp; Terms</h1>
-<p>Last updated: 1 October 2026</p>
+<p>Last updated: 24 October 2026</p>
 
 <p>Atrium is an AI coaching app: you practise real conversations (interviews, small talk, negotiations, exams and
 more) with a live AI voice, and get feedback afterwards. This page explains what we collect, why, who processes it,
@@ -32,7 +32,8 @@ and your choices. Contact: <a href="mailto:hello@atriumcoach.com">hello@atriumco
 <tr><td>Camera video (only if you turn the camera on)</td><td>Feedback on delivery; analysed by AI only with a separate consent</td><td>Google Cloud</td><td>365 days</td></tr>
 <tr><td>Face measurements (looking at the camera, smiling; computed on your device, frames never leave it)</td><td>Body-language feedback</td><td>—</td><td>365 days</td></tr>
 <tr><td>Transcripts, feedback, scores, progress</td><td>Coaching</td><td>Google Cloud (Gemini)</td><td>Until you delete your account</td></tr>
-<tr><td>Documents you add (resume, study material)</td><td>Preparing your practice</td><td>Google Cloud (Gemini)</td><td>Until you delete them</td></tr>
+<tr><td>Resume text, role details and written interview preparation</td><td>Building your interview journey and preparation guide</td><td>Google Cloud (Gemini) and, in the hackathon build, Nebius Token Factory (NVIDIA Nemotron)</td><td>Until you delete them</td></tr>
+<tr><td>Other documents you add (study material)</td><td>Preparing your practice</td><td>Google Cloud (Gemini)</td><td>Until you delete them</td></tr>
 <tr><td>Purchases (plan, renewal date; no card details)</td><td>Your subscription</td><td>Google Play, RevenueCat</td><td>As long as needed for billing</td></tr>
 <tr><td>A scrambled (hashed) device identifier and network address, when a new account starts its free trial</td><td>One free trial per person: stops repeat trials from new email addresses</td><td>—</td><td>Until you delete your account</td></tr>
 <tr><td>Usage counters and product analytics (hashed id)</td><td>Quotas and improving the app</td><td>Google Cloud</td><td>Up to 400 days</td></tr>
@@ -40,7 +41,11 @@ and your choices. Contact: <a href="mailto:hello@atriumcoach.com">hello@atriumco
 
 <p>We ask for consent before any AI processing and before recording. You can withdraw it at any time in the app
 (Account), which stops new processing immediately. We don't sell your data, and the app contains no advertising or
-tracking SDKs. AI providers process your data only to run Atrium, under Google Cloud's data-processing terms.</p>
+tracking SDKs. In the hackathon build, Atrium sends the resume text and role details needed for written interview
+preparation to Nebius Token Factory for NVIDIA Nemotron inference. This integration does not send recordings,
+transcripts or camera video to Nebius; those continue to use Google Cloud AI. AI providers process data to provide
+Atrium's selected features under their applicable service terms. See <a href="https://docs.tokenfactory.nebius.com/legal/subprocessors">Nebius Token Factory subprocessors</a>
+and <a href="https://docs.nebius.com/legal/privacy">Nebius's privacy policy</a>.</p>
 
 <h2>Your choices</h2>
 <ul>

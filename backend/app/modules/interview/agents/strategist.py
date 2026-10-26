@@ -35,7 +35,7 @@ from app.modules.interview.blueprint import (
 )
 from app.modules.interview.catalogs import ROUND_LABELS, RoundType, competencies_for_round
 from app.modules.interview.sanitize import clean_phrase, clean_text
-from app.platform.ai.gateway import Purpose, ResearchResult, gateway
+from app.platform.ai.gateway import Purpose, ResearchResult, gateway, nebius_attribution
 from app.platform.ai.stream_json import completed_array_objects, completed_string
 
 PROMPT_VERSION = "strategist-2026-09-16.2"
@@ -313,4 +313,7 @@ class InterviewStrategist:
         fields["searchSuggestionsHtml"] = research_result.search_suggestions_html
         fields["researchQueries"] = research_result.queries
         fields["promptVersion"] = PROMPT_VERSION
+        attribution = nebius_attribution(Purpose.BLUEPRINT)
+        if attribution:
+            fields["modelAttribution"] = attribution
         return fields

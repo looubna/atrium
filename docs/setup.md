@@ -24,7 +24,8 @@ cd firebase && npm install && npx firebase emulators:start --project demo-atrium
 
 # 2. API with the fake AI provider (in another terminal)
 cd backend && uv sync
-set -a; source .env.example; set +a          # APP_ENV=local, AI_PROVIDER=fake, emulator hosts
+cp -n .env.example .env.local                # first run only; this file is git-ignored
+set -a; source .env.local; set +a            # APP_ENV=local, AI_PROVIDER=fake, emulator hosts
 uv run python -m uvicorn app.main:create_app --factory --port 8000
 
 # 3. Web app (in another terminal)
@@ -37,6 +38,19 @@ generation) run inside the API process, so the whole flow works without Cloud Ta
 stand-ins. To use real models locally, set `AI_PROVIDER=vertex` and
 `VERTEX_PROJECT=atrium-coach-dev` (the only project `APP_ENV=local` may bill), and run
 `gcloud auth application-default login`.
+
+For the Nebius x NVIDIA hackathon build, keep `AI_PROVIDER=vertex` for live voice,
+speech recognition and grounded company research. Set `NEBIUS_TEXT_ENABLED=true`,
+add a server-side `NEBIUS_API_KEY`, and use the default `NEBIUS_TEXT_MODEL` to route
+the interview blueprint, resume profile and written round guide through NVIDIA
+Nemotron 3.5 Lightning on Nebius Token Factory. Text generation sends structured
+JSON requests to Token Factory's OpenAI-compatible API; calls that need Google Search
+or attached audio/video remain on the existing Vertex path. The key must never go in
+a `VITE_*` variable or browser storage. For local runs, put the API key and
+`NEBIUS_TEXT_ENABLED=true` in the git-ignored `backend/.env.local`, then source that
+file when starting the backend. Nemotron's default reasoning trace is disabled for
+these schema-constrained calls so the output budget remains available for JSON.
+Keep the tracked `.env.example` free of real keys.
 
 Microphone access requires a secure context: `http://localhost` works; a LAN IP does not.
 
@@ -53,6 +67,10 @@ Microphone access requires a secure context: `http://localhost` works; a LAN IP 
 | `USER_CONTENT_BUCKET`, `PROCESSING_BUCKET` | buckets (a local directory when `APP_ENV` is local/test) |
 | `LOCAL_OBJECTS_DIR` | where the local object store writes |
 | `AI_PROVIDER` | `vertex` or `fake` (prod must be `vertex`) |
+| `NEBIUS_TEXT_ENABLED` | `true` enables the hackathon's Token Factory path for supported structured interview text calls |
+| `NEBIUS_API_KEY` | Secret Token Factory key; required when the Nemotron path is enabled outside fake-AI mode |
+| `NEBIUS_BASE_URL` | Token Factory OpenAI-compatible base URL (`https://api.tokenfactory.nebius.com/v1`) |
+| `NEBIUS_TEXT_MODEL` | Token Factory model ID (`nvidia/Nemotron-3_5-Lightning`) |
 | `LIVE_MODEL`, `LIVE_LOCATION` | Gemini Live model and region |
 | `TEXT_MODEL`, `TEXT_LOCATION` | structured-output model and location |
 | `SPEECH_LOCATION` | Speech-to-Text multi-region (`us`) |

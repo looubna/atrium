@@ -319,6 +319,7 @@ export interface Blueprint {
   rounds?: BlueprintRound[]
   sources?: { id: string; title: string; domain: string; kind: string }[]
   caveats?: string[]
+  modelAttribution?: { provider: string; model: string }
   searchSuggestionsHtml?: string
   competencyNames?: Record<string, string>
 }
@@ -385,6 +386,7 @@ export interface RoundGuide {
   questionsToAsk: { question: string; why: string }[]
   /** The sample answers were built from the candidate's resume. */
   hasResume: boolean
+  modelAttribution?: { provider: string; model: string }
 }
 
 const guideUrl = (applicationId: string, blueprintId: string, roundId: string) =>

@@ -5,6 +5,7 @@
 | Environment | Project | Notes |
 |---|---|---|
 | dev | `atrium-coach-dev` | App Check not enforced; small quotas and budget |
+| app | `atrium-coach-app` | Active web-app project since 2026-10-01; uses the `dev` runtime policy |
 | staging | `atrium-coach-staging` | Mirrors production; App Check enforced |
 | prod | `atrium-coach-prod` | Deletion protection, point-in-time recovery, App Check enforced |
 
@@ -62,6 +63,28 @@ Budgets are in the billing account's currency (currently KRW).
 - The runtime service accounts have `roles/aiplatform.user`.
 - Quotas: Live API sessions are capped per project (1,000 concurrent by default); the
   app allows one live session per user and a monthly minute quota.
+
+## Nebius Token Factory / NVIDIA Nemotron
+
+The hackathon build uses Token Factory's OpenAI-compatible
+`/v1/chat/completions` API with `nvidia/Nemotron-3_5-Lightning`. It handles
+interview blueprints, resume profiles, and written round-preparation guides when
+`NEBIUS_TEXT_ENABLED=true`. Gemini Live, Google Search grounding, and calls with
+attached audio/video continue to use the existing Vertex path.
+
+The app Terraform environment opts into this route. Before applying it, create a
+Secret Manager secret named `nebius-api-key` in the app project and add the Token
+Factory key as its latest version. Do this in Secret Manager; never put the key in
+Terraform variables, Terraform state, source control, or a `VITE_*` variable.
+Terraform grants access to only the API and worker service accounts and exposes the
+secret as `NEBIUS_API_KEY` in both services. Then deploy the API and worker images.
+The old dev, staging and production environment configs remain on their existing AI path.
+
+The Token Factory model ID and public endpoint are non-secret settings in the app
+environment's `app_config`. The backend logs provider, model, latency and token usage,
+without prompt or candidate-answer content; estimated Nebius costs use the configured
+per-million-token rates in `Settings` (currently $0.06 input and $0.24 output per
+million tokens for this model; refresh these when the catalog pricing changes).
 
 ## Agent Development Kit (ADK)
 

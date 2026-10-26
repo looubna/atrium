@@ -50,12 +50,16 @@ module "platform" {
   ]
 
   app_config = {
-    LIVE_MODEL         = "gemini-live-2.5-flash-native-audio"
-    LIVE_LOCATION      = "us-central1"
-    TEXT_MODEL         = "gemini-3.8-flash"
-    TEXT_LOCATION      = "global"
-    SPEECH_LOCATION    = "us"
-    FREE_TRIAL_MINUTES = "20" # live minutes a free account gets once
+    # Hackathon edition: Nemotron builds interview journeys and preparation guides through Token Factory.
+    NEBIUS_TEXT_ENABLED = "true"
+    NEBIUS_BASE_URL     = "https://api.tokenfactory.nebius.com/v1"
+    NEBIUS_TEXT_MODEL   = "nvidia/Nemotron-3_5-Lightning"
+    LIVE_MODEL          = "gemini-live-2.5-flash-native-audio"
+    LIVE_LOCATION       = "us-central1"
+    TEXT_MODEL          = "gemini-3.8-flash"
+    TEXT_LOCATION       = "global"
+    SPEECH_LOCATION     = "us"
+    FREE_TRIAL_MINUTES  = "20" # live minutes a free account gets once
     # The lip-sync face machines, started on demand: the main one first, the standby when its zone
     # has no GPU (as on atrium-coach-dev, where these were set on the service by hand).
     FACE_VMS               = "us-central1-a/atrium-face-l4,us-east4-a/atrium-face-l4-standby"
