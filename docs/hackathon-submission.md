@@ -107,6 +107,17 @@ cannot authenticate model requests. Redeem it in Token Factory billing, then cre
 an API key in Token Factory and store that key in the backend environment or Secret
 Manager. Never add either value to the repository.
 
+## Feedback draft (based on the synthetic live request)
+
+Token Factory's OpenAI-compatible chat endpoint made it straightforward to connect
+Nemotron to Atrium's existing backend. The main integration adjustment was turning off
+the default reasoning trace for short structured calls; otherwise reasoning could use
+most of the output budget before the JSON guide was returned. Nemotron produced a
+useful role-specific draft in the live synthetic request, while schema validation and
+resume-grounding rules were still necessary to keep unsupported candidate anecdotes
+out of the guide. This build did not use Nebius AI Cloud or Serverless, so it has no
+firsthand feedback on those services.
+
 ## Before submitting
 
 - Publish the source repository with the MIT license visible on the repository
