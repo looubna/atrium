@@ -30,8 +30,9 @@ The integration has passed a live Token Factory request with synthetic text, and
 response passed schema validation. NVIDIA documents that Nemotron 3.5 Lightning reasons
 by default; concise structured calls therefore set `chat_template_kwargs.enable_thinking`
 to `false` so the reasoning trace cannot consume the entire output budget before JSON
-is returned. The complete app flow has not been deployed or verified yet; finish that
-demo flow before submitting a working demo URL.
+is returned. The existing frontend responds at `https://app.atriumcoach.com`, but the
+deployed backend has not been verified to use the new Token Factory setting, so the
+full Nemotron flow still needs an end-to-end check.
 
 ## Readiness status
 
@@ -40,12 +41,14 @@ demo flow before submitting a working demo URL.
   when the backend flag is enabled.
 - **Repository materials:** the root README, setup notes, and MIT license are present.
 - **Live verification:** synthetic live request returned visible JSON, stopped normally,
-  and used 241 tokens; full deployed app flow is pending.
+  and used 241 tokens. `https://app.atriumcoach.com` returned HTTP 200 on October 26,
+  2026; the live Nemotron flow on that deployment is unconfirmed.
 - **Video asset:** a 134-second, caption-led MP4 and matching SRT have been produced
   locally. The MP4 has no narration audio; it still needs a public YouTube upload.
-- **Still needed:** publish the source repository, provide a working hosted demo URL,
-  and add firsthand product feedback. The local video explains the product and model
-  path but does not replace a deployed end-to-end demo.
+- **Still needed:** make the populated source repository public, verify the deployed
+  app's Nemotron flow, upload the video publicly, and add firsthand product feedback.
+  The local video explains the product and model path but does not replace a deployed
+  end-to-end demo.
 
 The project predates this hackathon. The changes listed below describe the substantive
 work in this edition; keep the disclosure in the Devpost submission.
@@ -109,8 +112,9 @@ Manager. Never add either value to the repository.
 - Publish the source repository with the MIT license visible on the repository
   page. The target repository now contains the source on `main`, but it is still
   private; change its visibility to public before submitting.
-- Deploy an accessible demo and confirm the public demo's backend has the
-  Token Factory variables above.
+- Verify the full interview flow at `https://app.atriumcoach.com` and confirm its
+  backend has the Token Factory variables above. If the existing deployment cannot
+  be configured, deploy an accessible demo and use that URL instead.
 - Upload `Atrium-Nebius-Hackathon-Demo.mp4` to YouTube as a public video (it is 2:14
   and includes an SRT subtitle file). The current cut is caption-led and has no voice
   narration.
