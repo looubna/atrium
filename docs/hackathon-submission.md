@@ -39,16 +39,21 @@ full Nemotron flow still needs an end-to-end check.
 - **Track and model path:** Best Apps & Agents; the interview blueprint, resume profile,
   and written preparation guide route to NVIDIA Nemotron 3.5 Lightning on Token Factory
   when the backend flag is enabled.
-- **Repository materials:** the root README, setup notes, and MIT license are present.
+- **Repository materials:** `looubna/atrium` is public on GitHub; the root README,
+  setup notes, and root MIT `LICENSE` are present. Confirm GitHub displays the MIT
+  license in the repository's About area before submitting.
+- **Deployment wiring:** the `app` Terraform config enables the Token Factory path and
+  injects `NEBIUS_API_KEY` from Secret Manager into the API and worker. This confirms
+  the deployment configuration in source, not that the cloud secret exists or that the
+  currently deployed services have been updated.
 - **Live verification:** synthetic live request returned visible JSON, stopped normally,
   and used 241 tokens. `https://app.atriumcoach.com` returned HTTP 200 on October 26,
   2026; the live Nemotron flow on that deployment is unconfirmed.
-- **Video asset:** a 134-second, caption-led MP4 and matching SRT have been produced
-  locally. The MP4 has no narration audio; it still needs a public YouTube upload.
-- **Still needed:** make the populated source repository public, verify the deployed
-  app's Nemotron flow, upload the video publicly, and add firsthand product feedback.
-  The local video explains the product and model path but does not replace a deployed
-  end-to-end demo.
+- **Video asset:** the current narrated demo is 179.015 seconds (2:59.015), under the
+  three-minute limit. It is a local file and still needs a public YouTube upload.
+- **Still needed:** verify the deployed app's Nemotron flow, provide judge access that
+  works free of charge through the judging period, upload the current video publicly,
+  and submit firsthand product feedback.
 
 The project predates this hackathon. The changes listed below describe the substantive
 work in this edition; keep the disclosure in the Devpost submission.
@@ -120,19 +125,29 @@ firsthand feedback on those services.
 
 ## Before submitting
 
-- Publish the source repository with the MIT license visible on the repository
-  page. The target repository now contains the source on `main`, but it is still
-  private; change its visibility to public before submitting.
-- Verify the full interview flow at `https://app.atriumcoach.com` and confirm its
-  backend has the Token Factory variables above. If the existing deployment cannot
-  be configured, deploy an accessible demo and use that URL instead.
-- Upload `Atrium-Nebius-Hackathon-Demo.mp4` to YouTube as a public video (it is 2:14
-  and includes an SRT subtitle file). The current cut is caption-led and has no voice
-  narration.
-- Record a short live end-to-end run against the deployed app so judges can see the
-  actual interface generate and display Nemotron output, rather than relying only on
-  the explainer cards and sample interview footage in the local video.
+- Verify the full interview flow at `https://app.atriumcoach.com`: create or open an
+  interview journey, generate a guide, and confirm the UI attributes the result to
+  Nemotron on Nebius Token Factory. Confirm the deployed API and worker have the
+  Token Factory secret and current revision. A successful synthetic API request alone
+  does not verify the deployed app.
+- Provide a demo URL and judge testing instructions. If sign-in is required, provide
+  working test credentials; make sure judges can use the project free of charge and
+  without access restrictions through the end of judging.
+- Upload the current narrated demo to YouTube with public visibility and submit its
+  link. Keep it below three minutes and check that any third-party marks or media are
+  used with permission.
 - Add honest feedback on Nebius Token Factory and NVIDIA Nemotron based on actual
   development and deployment experience.
 - Disclose that Atrium predates the hackathon and use the update list above to
   describe the work added during the submission period.
+- Confirm the GitHub repository is public, the root MIT license is detected and shown
+  in the repository About area, and the README has working setup instructions.
+- Confirm the English project description, demo, and testing instructions match the
+  behavior judges can access. Entrant eligibility, original ownership, and rights to
+  third-party content are entrant attestations that this code review cannot establish.
+
+## Prize eligibility note
+
+The supplied prize-eligibility note says each Project may receive either one Overall
+Award, or one Track Award plus one Bonus Award. This does not change the code or
+submission category.
